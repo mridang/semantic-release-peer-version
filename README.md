@@ -18,13 +18,13 @@ that dependency. Releasing a new major version of your software (e.g., v3.0.0)
 that depends on an older major version of an upstream service (e.g., v2.x.x) can
 lead to:
 
-* **Integration Issues:** Your new major version might be incompatible with the
+- **Integration Issues:** Your new major version might be incompatible with the
   currently deployed upstream service if it expects features or breaking
   changes from a newer, unreleased upstream major version.
-* **User Confusion:** Users might upgrade your package expecting it to work
+- **User Confusion:** Users might upgrade your package expecting it to work
   with the latest stable upstream, only to find it's designed for a future,
   unreleased upstream version.
-* **Deployment Blockers:** You might intend for your v3.0.0 to work with the
+- **Deployment Blockers:** You might intend for your v3.0.0 to work with the
   upstream's upcoming v3.0.0, but if your release pipeline is faster, your
   v3.0.0 could be released prematurely.
 
@@ -47,7 +47,7 @@ npm install --save @mridang/semantic-release
 To use this plugin, add it to your semantic-release configuration file (e.g.,
 `.releaserc.js`, `release.config.js`, or in your `package.json`).
 
-The plugin should typically be placed *before* the `@semantic-release/npm` or
+The plugin should typically be placed _before_ the `@semantic-release/npm` or
 `@semantic-release/github` plugins in the `plugins` array, as it needs to run
 its checks in the `verifyConditions` and `analyzeCommits` steps.
 
@@ -82,21 +82,21 @@ actual published name of your package if it's different.
 
 ## Known Issues
 
-* **GitHub API Rate Limiting:** The plugin makes requests to the GitHub API to
+- **GitHub API Rate Limiting:** The plugin makes requests to the GitHub API to
   fetch tags and compare commits. Unauthenticated requests are subject to
   stricter rate limits. For frequent use or in CI environments, providing a
   `githubToken` with appropriate permissions is highly recommended to avoid
   being rate-limited.
-* **Upstream Repository Tagging:** This plugin relies on the upstream
+- **Upstream Repository Tagging:** This plugin relies on the upstream
   repository using [Semantic Versioning](https://semver.org/) for its tags and
   these tags being present on the specified branch. If the upstream repository
   does not follow semver for tags or uses a different tagging strategy on the
   target branch, the plugin may not be able to determine the correct major
   version cap.
-* **Tag Pagination:** The plugin currently fetches up to the 100 most recent
+- **Tag Pagination:** The plugin currently fetches up to the 100 most recent
   tags from the upstream repository. If the relevant semver tag on the branch
   is older than the 100 most recent tags, it might not be found.
-* **Token Permissions:** If a `githubToken` is provided, it must have
+- **Token Permissions:** If a `githubToken` is provided, it must have
   sufficient read permissions for the upstream repository (e.g., `repo` scope
   for private repositories, or public access for public repositories) to list
   tags and compare commits.
