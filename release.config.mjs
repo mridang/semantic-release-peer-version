@@ -1,5 +1,4 @@
-const packageJson = require('./package.json');
-
+// noinspection JSUnusedGlobalSymbols
 export default {
   branches: ['master'],
   plugins: [
@@ -29,5 +28,5 @@ export default {
       },
     ],
   ],
-  repositoryUrl: packageJson.repository.url,
+  repositoryUrl: "git+https://github.com/mridang/semantic-release.git"
 };
