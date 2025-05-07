@@ -186,7 +186,7 @@ export async function verifyConditions(
  * Blocks a major release if it exceeds the upstream cap.
  */
 export async function analyzeCommits(
-  pluginConfig: PluginConfig & { commitAnalyzerConfig: unknown },
+  pluginConfig: PluginConfig & { commitAnalyzerConfig?: unknown },
   context: AnalyzeCommitsContext & { majorCapFromUpstream: number },
 ): Promise<string | null> {
   let effectiveCommitAnalyzerConfig = pluginConfig.commitAnalyzerConfig;

@@ -16,12 +16,9 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"keywords": [
-		"opentelemetry",
+		"semver",
 		"nodejs",
-		"tracing",
-		"profiling",
-		"xray",
-		"aws"
+		"semantic-release"
 	],
 	"author": {
 		"name": "Mridang Agarwalla",
@@ -32,13 +29,8 @@
 		"dist"
 	],
 	"license": "ISC",
-	"description": "OpenTelemetry Exporter that allows the user to send the collected traces to AWS X-Ray",
+	"description": "Semantic Release plugin that prevents major releases unless a corresponding tag exists on a specific branch in an upstream GitHub repository.",
 	"private": false,
-	"peerDependencies": {
-		"@opentelemetry/api": "^1.0.0",
-		"@opentelemetry/id-generator-aws-xray": "^1.0.0",
-		"@opentelemetry/propagator-aws-xray": "^1.0.0"
-	},
 	"engines": {
 		"node": "20.x"
 	},
