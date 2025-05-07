@@ -41,6 +41,7 @@
 	"homepage": "https://github.com/mridang/semantic-release",
 	"bugs": "https://github.com/mridang/semantic-release/issues",
 	"dependencies": {
+		"conventional-changelog-conventionalcommits": "^8.0.0",
 		"semver": "^7.7.1"
 	},
 	"devDependencies": {
@@ -55,7 +56,6 @@
 		"@types/jest": "^29.5.12",
 		"@types/node": "^20.3.2",
 		"@types/semantic-release": "^20.0.6",
-		"conventional-changelog-conventionalcommits": "^8.0.0",
 		"eslint": "^8.57.1",
 		"jest": "^29.7.0",
 		"knip": "^5.43.6",
