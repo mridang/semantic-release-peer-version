@@ -8,9 +8,6 @@ import type {
   VerifyConditionsContext,
 } from 'semantic-release';
 
-const repo = 'github/docs';
-const branch = 'main';
-
 jest.setTimeout(30000);
 
 describe('Integration: block-major plugin hooks', () => {
@@ -24,11 +21,11 @@ describe('Integration: block-major plugin hooks', () => {
       cwd: process.cwd(),
     } as unknown as VerifyConditionsContext & { majorCapFromUpstream: number };
 
-    await verifyConditions({ repo, branch }, ctx);
+    await verifyConditions({ repo: 'cli/cli' }, ctx);
     expect(typeof ctx.majorCapFromUpstream).toBe('number');
     expect(ctx.majorCapFromUpstream).toBeGreaterThanOrEqual(0);
     const res = await fetch(
-      `https://api.github.com/repos/${repo}/tags?per_page=1`,
+      `https://api.github.com/repos/cli/cli/tags?per_page=1`,
     );
     const tags = (await res.json()) as Array<{ name: string }>;
     const [t] = tags;
@@ -47,7 +44,7 @@ describe('Integration: block-major plugin hooks', () => {
       cwd: process.cwd(),
     } as unknown as AnalyzeCommitsContext & { majorCapFromUpstream: number };
 
-    const result = await analyzeCommits({ repo, branch }, ctx);
+    const result = await analyzeCommits({ repo: 'cli/cli' }, ctx);
     expect(result).toBe('major');
   });
 
@@ -63,7 +60,7 @@ describe('Integration: block-major plugin hooks', () => {
       cwd: process.cwd(),
     } as unknown as AnalyzeCommitsContext & { majorCapFromUpstream: number };
 
-    await expect(analyzeCommits({ repo, branch }, ctx)).rejects.toThrow(
+    await expect(analyzeCommits({ repo: 'cli/cli' }, ctx)).rejects.toThrow(
       /Blocked: next major/,
     );
   });
@@ -80,7 +77,7 @@ describe('Integration: block-major plugin hooks', () => {
       cwd: process.cwd(),
     } as unknown as AnalyzeCommitsContext & { majorCapFromUpstream: number };
 
-    const result = await analyzeCommits({ repo, branch }, ctx);
+    const result = await analyzeCommits({ repo: 'cli/cli' }, ctx);
     expect(result).toBe('patch');
   });
 });

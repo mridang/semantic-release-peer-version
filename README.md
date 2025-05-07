@@ -61,8 +61,7 @@ module.exports = {
     [
       '@mridang/semantic-release-upstream-version-blocker', // Replace with your actual package name
       {
-        repo: 'upstream-owner/upstream-repo-name', // e.g., 'my-org/my-api'
-        branch: 'main', // The branch in the upstream repo to check for tags
+        repo: 'owner/repo',
         // Optional: GitHub token for private repos or to avoid rate limiting
         // Defaults to process.env.GITHUB_TOKEN || process.env.GH_TOKEN
         // githubToken: process.env.UPSTREAM_GITHUB_TOKEN
