@@ -1,6 +1,6 @@
 {
 	"name": "@mridang/semantic-release-peer-version",
-	"version": "0.0.1",
+	"version": "1.0.0",
 	"type": "module",
 	"scripts": {
 		"prepack": "tsc",
