@@ -1,11 +1,14 @@
 import semver from 'semver';
-// @ts-expect-error dgd fgsgs
+// @ts-expect-error since this is not typed
 import { analyzeCommits as moox } from '@semantic-release/commit-analyzer';
 import {
   AnalyzeCommitsContext,
   BaseContext,
   VerifyConditionsContext,
 } from 'semantic-release';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 interface PluginConfig {
   /**
@@ -136,7 +139,12 @@ export async function analyzeCommits(
     context.logger.log(
       '[block-major] No specific commitAnalyzerConfig provided, defaulting to { preset: "conventionalcommits" } for base analyzer.',
     );
-    effectiveCommitAnalyzerConfig = { preset: 'conventionalcommits' };
+    const conventionalCommitsPresetPath = require.resolve(
+      'conventional-changelog-conventionalcommits',
+    );
+    effectiveCommitAnalyzerConfig = {
+      config: conventionalCommitsPresetPath,
+    };
   } else {
     context.logger.log(
       '[block-major] Using provided commitAnalyzerConfig for base analyzer.',
