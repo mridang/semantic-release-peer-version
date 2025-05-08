@@ -41,6 +41,7 @@
 	"homepage": "https://github.com/mridang/semantic-release",
 	"bugs": "https://github.com/mridang/semantic-release/issues",
 	"dependencies": {
+		"@semantic-release/error": "^4.0.0",
 		"conventional-changelog-conventionalcommits": "^8.0.0",
 		"semver": "^7.7.1"
 	},
