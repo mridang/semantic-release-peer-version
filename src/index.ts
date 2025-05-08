@@ -120,9 +120,13 @@ export async function verifyConditions(
  * analyzeCommits hook
  * Blocks a major release if it exceeds the upstream cap.
  */
+/**
+ * analyzeCommits hook
+ * Blocks a major release if it exceeds the upstream cap.
+ */
 export async function analyzeCommits(
   pluginConfig: PluginConfig & { commitAnalyzerConfig?: unknown },
-  context: AnalyzeCommitsContext & { majorCapFromUpstream: number },
+  context: AnalyzeCommitsContext,
 ): Promise<string | null> {
   let effectiveCommitAnalyzerConfig = pluginConfig.commitAnalyzerConfig;
   if (
@@ -141,28 +145,51 @@ export async function analyzeCommits(
   const releaseType = await moox(effectiveCommitAnalyzerConfig, context);
 
   if (releaseType === 'major') {
+    const { repo, githubToken } = pluginConfig;
+    let cap: number;
+
+    context.logger.log(
+      `[block-major] Determining major version cap from upstream releases for ${repo} (in analyzeCommits).`,
+    );
+    const latestTag = await getLatestSemverTag(
+      repo,
+      githubToken,
+      context.logger,
+    );
+
+    if (latestTag !== null) {
+      cap = semver.major(latestTag);
+      context.logger.log(
+        `[block-major] Latest upstream release tag is "${latestTag}" → upstream major cap = ${cap}.`,
+      );
+    } else {
+      cap = 0;
+      context.logger.log(
+        `[block-major] No valid upstream release tags found → upstream major cap = 0.`,
+      );
+    }
+
     const current = context.lastRelease?.version ?? '0.0.0';
     const next = semver.inc(current, 'major');
     if (next !== null) {
       const nextMaj = semver.major(next);
-      const cap = context.majorCapFromUpstream ?? Infinity;
       if (nextMaj > cap) {
         throw new Error(
-          `[block-major] Blocked: next major ${nextMaj} > cap ${cap} (from ${pluginConfig.repo}).`,
+          `[block-major] Blocked: next major version ${nextMaj} would exceed upstream major version cap of ${cap} (derived from upstream repo: ${pluginConfig.repo}).`,
         );
       } else {
         context.logger.log(
-          `[block-major] Next major ${nextMaj} is within cap ${cap}; proceeding.`,
+          `[block-major] Next major version ${nextMaj} is within or equal to upstream major version cap ${cap}; proceeding.`,
         );
       }
     } else {
       context.logger.log(
-        '[block-major] Could not compute next version; skipping cap check.',
+        '[block-major] Could not compute next major version; skipping cap check.',
       );
     }
   } else {
     context.logger.log(
-      `[block-major] Release type "${releaseType}" — no major bump.`,
+      `[block-major] Release type is "${releaseType}" — no major bump, cap check not applicable.`,
     );
   }
 
