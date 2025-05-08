@@ -20,23 +20,23 @@ developing `your-project v2.1.0` which is compatible with
 to `v3.0.0`, this new version is likely intended to align with, or require
 features from, `upstream-dependency v3.0.0` (or newer).
 
-Releasing `your-project v3.0.0` *before* `upstream-dependency` has itself
+Releasing `your-project v3.0.0` _before_ `upstream-dependency` has itself
 reached at least major version 3 (e.g., `v3.0.0`) on its relevant branch
 can lead to several problems:
 
--   **Integration Issues:** Your new `v3.0.0` might be incompatible with the
-	currently deployed `v2.x.x` of the upstream service because it expects
-	features or breaking changes from the (as yet unreleased) upstream
-	`v3.0.0`.
--   **User Confusion:** Users might upgrade `your-project` to `v3.0.0` expecting
-	it to work with the latest stable version of the upstream dependency,
-	only to discover it's designed for a future, unreleased upstream
-	version.
--   **Deployment Blockers:** You might intend for `your-project v3.0.0` to be
-	released in tandem with `upstream-dependency v3.0.0`. However, if your
-	project's release pipeline triggers first, your `v3.0.0` could be
-	published prematurely, leading to a version that doesn't work
-	correctly in the current ecosystem.
+- **Integration Issues:** Your new `v3.0.0` might be incompatible with the
+  currently deployed `v2.x.x` of the upstream service because it expects
+  features or breaking changes from the (as yet unreleased) upstream
+  `v3.0.0`.
+- **User Confusion:** Users might upgrade `your-project` to `v3.0.0` expecting
+  it to work with the latest stable version of the upstream dependency,
+  only to discover it's designed for a future, unreleased upstream
+  version.
+- **Deployment Blockers:** You might intend for `your-project v3.0.0` to be
+  released in tandem with `upstream-dependency v3.0.0`. However, if your
+  project's release pipeline triggers first, your `v3.0.0` could be
+  published prematurely, leading to a version that doesn't work
+  correctly in the current ecosystem.
 
 This plugin provides a safeguard by checking a designated upstream GitHub
 repository and a specific branch within it. If your automated release process
@@ -90,32 +90,32 @@ module.exports = {
 
 ## Known Issues
 
--   **GitHub API Rate Limiting:** The plugin interacts with the GitHub API to
-	fetch release information (which includes tags) and potentially compare
-	commits. Unauthenticated API requests are subject to stricter rate limits.
-	To prevent disruptions, especially in CI environments or with frequent
-	usage, providing a `githubToken` is highly recommended. This enables the
-	more lenient rate limits associated with authenticated requests.
--   **Upstream Repository Tagging and Versioning:** This plugin relies on the
-	upstream repository adhering to [Semantic Versioning](https://semver.org/)
-	for its release tags. These SemVer tags should be associated with
-	published releases on the repository. If the upstream repository does not
-	consistently use SemVer for its release tags, the plugin may be unable to
-	accurately determine versioning information, such as a major version cap.
--   **Release Pagination:** The plugin currently fetches data for up to the 100
-	most recent releases from the upstream repository to identify relevant
-	SemVer tags. If the specific SemVer-tagged release crucial for the
-	plugin's logic (e.g., for version capping or comparison) is older than
-	these 100 most recent releases, it might not be detected.
--   **Token Permissions:** When a `githubToken` is provided, it must have
-	sufficient permissions to access the upstream repository's data. For
-	private repositories, the `repo` scope (granting full control of private
-	repositories) is typically required. For public repositories, while a token
-	might not be strictly necessary for basic read access, providing one for
-	authenticated requests (which helps with rate limits) means the token
-	must still have adequate permissions to read repository content, list
-	releases, and compare commits if these operations are performed by the
-	plugin.
+- **GitHub API Rate Limiting:** The plugin interacts with the GitHub API to
+  fetch release information (which includes tags) and potentially compare
+  commits. Unauthenticated API requests are subject to stricter rate limits.
+  To prevent disruptions, especially in CI environments or with frequent
+  usage, providing a `githubToken` is highly recommended. This enables the
+  more lenient rate limits associated with authenticated requests.
+- **Upstream Repository Tagging and Versioning:** This plugin relies on the
+  upstream repository adhering to [Semantic Versioning](https://semver.org/)
+  for its release tags. These SemVer tags should be associated with
+  published releases on the repository. If the upstream repository does not
+  consistently use SemVer for its release tags, the plugin may be unable to
+  accurately determine versioning information, such as a major version cap.
+- **Release Pagination:** The plugin currently fetches data for up to the 100
+  most recent releases from the upstream repository to identify relevant
+  SemVer tags. If the specific SemVer-tagged release crucial for the
+  plugin's logic (e.g., for version capping or comparison) is older than
+  these 100 most recent releases, it might not be detected.
+- **Token Permissions:** When a `githubToken` is provided, it must have
+  sufficient permissions to access the upstream repository's data. For
+  private repositories, the `repo` scope (granting full control of private
+  repositories) is typically required. For public repositories, while a token
+  might not be strictly necessary for basic read access, providing one for
+  authenticated requests (which helps with rate limits) means the token
+  must still have adequate permissions to read repository content, list
+  releases, and compare commits if these operations are performed by the
+  plugin.
 
 ## Useful links
 
