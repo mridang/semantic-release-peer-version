@@ -28,5 +28,5 @@ export default {
       },
     ],
   ],
-  repositoryUrl: "git+https://github.com/mridang/semantic-release.git"
+  repositoryUrl: "git+https://github.com/mridang/semantic-release-peer-version.git"
 };

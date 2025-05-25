@@ -1,5 +1,5 @@
 {
-	"name": "@mridang/semantic-release-peer-version",
+	"name": "@mridang/semantic-release-peer-version-peer-version",
 	"version": "1.0.6",
 	"type": "module",
 	"scripts": {
@@ -32,14 +32,14 @@
 	"description": "Semantic Release plugin that prevents major releases unless a corresponding tag exists on a specific branch in an upstream GitHub repository.",
 	"private": false,
 	"engines": {
-		"node": "20.x"
+		"node": ">=20.0.0"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/mridang/semantic-release.git"
+		"url": "git+https://github.com/mridang/semantic-release-peer-version.git"
 	},
-	"homepage": "https://github.com/mridang/semantic-release",
-	"bugs": "https://github.com/mridang/semantic-release/issues",
+	"homepage": "https://github.com/mridang/semantic-release-peer-version",
+	"bugs": "https://github.com/mridang/semantic-release-peer-version/issues",
 	"dependencies": {
 		"@semantic-release/error": "^4.0.0",
 		"conventional-changelog-conventionalcommits": "^8.0.0",
