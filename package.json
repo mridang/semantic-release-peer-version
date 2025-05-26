@@ -1,5 +1,5 @@
 {
-	"name": "@mridang/semantic-release-peer-version-peer-version",
+	"name": "@mridang/semantic-release-peer-version",
 	"version": "1.0.7",
 	"type": "module",
 	"scripts": {
