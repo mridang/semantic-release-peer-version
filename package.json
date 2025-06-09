@@ -42,7 +42,7 @@
 	"bugs": "https://github.com/mridang/semantic-release-peer-version/issues",
 	"dependencies": {
 		"@semantic-release/error": "^4.0.0",
-		"conventional-changelog-conventionalcommits": "^8.0.0",
+		"conventional-changelog-conventionalcommits": "^9.0.0",
 		"semver": "^7.7.1"
 	},
 	"devDependencies": {
