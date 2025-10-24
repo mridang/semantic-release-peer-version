@@ -32,7 +32,7 @@
   "description": "Semantic Release plugin that prevents major releases unless a corresponding tag exists on a specific branch in an upstream GitHub repository.",
   "private": false,
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "repository": {
     "type": "git",
@@ -53,9 +53,9 @@
     "@semantic-release/github": "^11.0.3",
     "@semantic-release/npm": "^12.0.1",
     "@semantic-release/release-notes-generator": "^14.0.0",
-    "@tsconfig/node20": "latest",
+    "@tsconfig/node22": "^22.0.2",
     "@types/jest": "^30.0.0",
-    "@types/node": "^22.15.21",
+    "@types/node": "^22.18.12",
     "@types/semver": "^7.7.0",
     "eslint": "^9.27.0",
     "jest": "^30.0.3",
