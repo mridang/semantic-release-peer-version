@@ -42,7 +42,7 @@
   "bugs": "https://github.com/mridang/semantic-release-peer-version/issues",
   "dependencies": {
     "@semantic-release/error": "^4.0.0",
-    "conventional-changelog-conventionalcommits": "^8.0.0",
+    "conventional-changelog-conventionalcommits": "^9.1.0",
     "semver": "^7.7.1"
   },
   "devDependencies": {
@@ -55,7 +55,7 @@
     "@semantic-release/release-notes-generator": "^14.1.0",
     "@tsconfig/node22": "^22.0.2",
     "@types/jest": "^30.0.0",
-    "@types/node": "^22.18.12",
+    "@types/node": "^25.0.6",
     "@types/semver": "^7.7.0",
     "eslint": "^9.27.0",
     "jest": "^30.0.3",

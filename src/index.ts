@@ -285,9 +285,8 @@ export async function analyzeCommits(
     context.logger.log(
       'No specific commitAnalyzerConfig provided, defaulting to { preset: "conventionalcommits" } for base analyzer.',
     );
-    const conventionalCommitsPresetPath = require.resolve(
-      'conventional-changelog-conventionalcommits',
-    );
+    const conventionalCommitsPresetPath =
+      require.resolve('conventional-changelog-conventionalcommits');
     effectiveCommitAnalyzerConfig = {
       config: conventionalCommitsPresetPath,
     };
