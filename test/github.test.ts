@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { createServer, type RequestListener } from 'node:http';
+import { messageOf } from '../src/utils/error.js';
 import { startTunnelProxy } from './utils/proxy.js';
 import { Agent, MockAgent, Response } from 'undici';
 // noinspection ES6PreferShortImport
@@ -397,6 +398,26 @@ describe('GitHubClient against a local server', () => {
         'v5.0.0',
       ]);
     });
+  });
+
+  it('names the reason when a connection is refused, without the token', async () => {
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const address = probe.address();
+    const port =
+      address !== null && typeof address === 'object' ? address.port : 0;
+    await new Promise((resolve) => probe.close(resolve));
+    const client = new GitHubClient({
+      token: 'SECRET-TOKEN',
+      endpoint: `http://127.0.0.1:${port}`,
+      agent: new Agent(),
+      minTimeout: 1,
+    });
+
+    const error = await client.listReleaseTags('o/r').catch((e: unknown) => e);
+
+    expect(messageOf(error)).toMatch(/ECONNREFUSED/);
+    expect(messageOf(error)).not.toContain('SECRET-TOKEN');
   });
 
   it('sends requests through the proxy named in the environment', async () => {

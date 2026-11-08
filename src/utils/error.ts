@@ -1,24 +1,27 @@
+import { isRecord } from './object.js';
+
 /**
- * The message of anything that was thrown. Errors without a message, such as
- * the `AggregateError` Node raises when a dual-stack connection is refused,
- * are described by their `code`, then by their first inner error, then by
- * their name.
+ * The message of anything that was thrown. Errors with an empty message, such
+ * as the `AggregateError` Node raises when every address of a host refuses
+ * the connection, are described by their `code`, then by their first inner
+ * error, then by their name.
+ *
+ * Errors are recognised by shape rather than by `instanceof`, because errors
+ * raised by Node itself can come from another realm (a test sandbox, for one).
  *
  * @param error A caught value, which is not necessarily an `Error`.
  * @returns Its message, or its string form when it is not an `Error`.
  */
 export function messageOf(error: unknown): string {
-  if (!(error instanceof Error)) {
+  if (!isRecord(error) || typeof error.message !== 'string') {
     return String(error);
   }
-  if (error.message !== '') {
+  if (error.message) {
     return error.message;
   }
-  if ('code' in error && typeof error.code === 'string') {
+  if (typeof error.code === 'string' && error.code) {
     return error.code;
   }
-  // Not `instanceof AggregateError`: the error may come from another realm.
-  const [first] =
-    'errors' in error && Array.isArray(error.errors) ? error.errors : [];
-  return first === undefined ? error.name : messageOf(first);
+  const [first] = Array.isArray(error.errors) ? error.errors : [];
+  return first === undefined ? String(error.name ?? 'Error') : messageOf(first);
 }
