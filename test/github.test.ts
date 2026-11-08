@@ -1,12 +1,9 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { createServer, type RequestListener } from 'node:http';
-import { MockAgent, Response } from 'undici';
+import { startTunnelProxy } from './utils/proxy.js';
+import { Agent, MockAgent, Response } from 'undici';
 // noinspection ES6PreferShortImport
-import {
-  GitHubClient,
-  createDispatcher,
-  type GitHubClientOptions,
-} from '../src/github.js';
+import { GitHubClient, type GitHubClientOptions } from '../src/github.js';
 
 type Fetch = NonNullable<GitHubClientOptions['fetch']>;
 
@@ -74,7 +71,7 @@ describe('GitHubClient.listReleaseTags', () => {
 
     await expect(
       new GitHubClient({ fetch: send }).listReleaseTags('o/r'),
-    ).rejects.toThrow('fetch failed (getaddrinfo ENOTFOUND api.github.com)');
+    ).rejects.toThrow('fetch failed: getaddrinfo ENOTFOUND api.github.com');
   });
 
   it('reports a network failure', async () => {
@@ -124,7 +121,7 @@ describe('GitHubClient.listReleaseTags', () => {
 
 describe('GitHubClient retries', () => {
   const retrying = (agent: MockAgent) =>
-    new GitHubClient({ dispatcher: createDispatcher(agent) });
+    new GitHubClient({ agent, minTimeout: 1 });
 
   const mockAgent = (): MockAgent => {
     const agent = new MockAgent();
@@ -198,7 +195,7 @@ describe('GitHubClient against a local server', () => {
    */
   const withServer = async (
     listener: RequestListener,
-    run: (client: GitHubClient) => Promise<void>,
+    run: (client: GitHubClient, port: number) => Promise<void>,
   ): Promise<void> => {
     const server = createServer(listener);
     await new Promise<void>((resolve) =>
@@ -208,7 +205,13 @@ describe('GitHubClient against a local server', () => {
     const port =
       address !== null && typeof address === 'object' ? address.port : 0;
     try {
-      await run(new GitHubClient({ baseUrl: `http://127.0.0.1:${port}` }));
+      await run(
+        new GitHubClient({
+          endpoint: `http://127.0.0.1:${port}`,
+          agent: new Agent(),
+        }),
+        port,
+      );
     } finally {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
@@ -253,5 +256,39 @@ describe('GitHubClient against a local server', () => {
     });
 
     expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends requests through the proxy named in the environment', async () => {
+    const backend = jest.fn<RequestListener>((_request, response) => {
+      response
+        .writeHead(200, { 'Content-Type': 'application/json' })
+        .end('[{"tag_name":"v9.0.0"}]');
+    });
+    const server = createServer(backend);
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
+    const address = server.address();
+    const proxy = await startTunnelProxy(
+      address !== null && typeof address === 'object' ? address.port : 0,
+    );
+    const env = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      HTTP_PROXY: proxy.url,
+      http_proxy: proxy.url,
+      NO_PROXY: '',
+      no_proxy: '',
+    });
+    try {
+      const client = new GitHubClient({ endpoint: 'http://github.invalid' });
+
+      await expect(client.listReleaseTags('o/r')).resolves.toEqual(['v9.0.0']);
+      expect(proxy.tunnelled).toEqual(['github.invalid:80']);
+    } finally {
+      env.restore();
+      server.closeAllConnections();
+      server.close();
+      await proxy.close();
+    }
   });
 });

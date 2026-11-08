@@ -1,56 +1,59 @@
 import SemanticReleaseError from '@semantic-release/error';
-import { Agent, RetryAgent, fetch, type Dispatcher } from 'undici';
+import { EnvHttpProxyAgent, RetryAgent, fetch, type Dispatcher } from 'undici';
 import { messageOf } from './utils/error.js';
 import { isRecord, stringAt } from './utils/object.js';
 
 const API_ROOT = 'https://api.github.com';
 
-const REQUEST_TIMEOUT_MS = 60_000;
-
 /**
- * The agent every client uses unless told otherwise. It comes from the
- * installed `undici` package rather than the runtime's global dispatcher: on
- * some Node versions the global one is the runtime's bundled undici, which
- * `RetryAgent` cannot wrap.
+ * The longest a whole call may take, retries and back-off included.
  */
-const defaultAgent = new Agent({
-  connect: { timeout: 10_000 },
-  headersTimeout: 30_000,
-  bodyTimeout: 30_000,
-});
+const TOTAL_TIMEOUT_MS = 120000;
 
 /**
- * Create the dispatcher the client uses by default. Every request made through
- * it is a GET, which is safe to repeat, so throttling (429), server errors
- * (500, 502, 503, 504), dropped connections and connection or header timeouts
- * are retried with exponential backoff. A `Retry-After` header is honoured but
- * never waited on for longer than ten seconds. When the retries run out, the
- * last response is returned so that its status can be explained.
+ * The longest wait between two attempts, which also caps a `Retry-After`
+ * header from GitHub.
+ */
+const MAX_BACKOFF_MS = 15000;
+
+/**
+ * Failures worth another attempt, for the methods that may be retried. Naming
+ * them replaces undici's own list, so it is repeated here with the three
+ * timeout codes added.
+ */
+const RETRYABLE_ERROR_CODES = [
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'EHOSTDOWN',
+  'EHOSTUNREACH',
+  'EPIPE',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+];
+
+/**
+ * The connections to GitHub, from the installed `undici` (the runtime's
+ * bundled undici cannot be wrapped by `RetryAgent`). They honour the
+ * `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` environment variables, as Node's
+ * own `fetch` does under `NODE_USE_ENV_PROXY`; the variables are read when a
+ * client is built.
  *
- * @param base The dispatcher to wrap; tests pass their own.
- * @returns A dispatcher that retries idempotent requests.
+ * @returns A dispatcher with connection and response timeouts.
  */
-export function createDispatcher(base: Dispatcher = defaultAgent): Dispatcher {
-  return new RetryAgent(base, {
-    maxRetries: 3,
-    minTimeout: 500,
-    maxTimeout: 10_000,
-    timeoutFactor: 2,
-    methods: ['GET'],
-    throwOnError: false,
-    errorCodes: [
-      'ECONNRESET',
-      'ECONNREFUSED',
-      'ENOTFOUND',
-      'ENETDOWN',
-      'ENETUNREACH',
-      'EHOSTDOWN',
-      'EHOSTUNREACH',
-      'EPIPE',
-      'UND_ERR_SOCKET',
-      'UND_ERR_CONNECT_TIMEOUT',
-      'UND_ERR_HEADERS_TIMEOUT',
-    ],
+function connections(): Dispatcher {
+  return new EnvHttpProxyAgent({
+    connect: { timeout: 10000 },
+    headersTimeout: 30000,
+    bodyTimeout: 30000,
+    // One lookup per run: do not keep the socket (and so the process) alive
+    // afterwards.
+    keepAliveTimeout: 1,
+    keepAliveMaxTimeout: 1,
   });
 }
 
@@ -112,7 +115,7 @@ function describeFailure(
  */
 function reasonOf(error: unknown): string {
   return error instanceof Error && error.cause !== undefined
-    ? `${error.message} (${messageOf(error.cause)})`
+    ? `${error.message}: ${messageOf(error.cause)}`
     : messageOf(error);
 }
 
@@ -126,51 +129,61 @@ export interface GitHubClientOptions {
    */
   readonly token?: string;
 
-  /**
-   * The `fetch` to call, undici's by default. Tests inject a fake.
-   */
+  /** The `fetch` to call, undici's by default. Tests inject a fake. */
   readonly fetch?: typeof fetch;
 
-  /**
-   * The dispatcher passed to `fetch`; {@link createDispatcher} by default.
-   */
-  readonly dispatcher?: Dispatcher;
+  /** The dispatcher that is wrapped in the retrying agent. */
+  readonly agent?: Dispatcher;
 
-  /**
-   * The API root, `https://api.github.com` by default. Tests point it at a
-   * local server.
-   */
-  readonly baseUrl?: string;
+  /** The API root. Defaults to GitHub's. */
+  readonly endpoint?: string;
 
-  /**
-   * Upper bound, in milliseconds, for a whole call including its retries.
-   */
+  /** The first back-off in milliseconds, doubled for each retry. */
+  readonly minTimeout?: number;
+
+  /** The longest a whole call may take, in milliseconds. */
   readonly timeoutMs?: number;
 }
 
 /**
- * A small client for the parts of the GitHub REST API the plugin needs.
+ * A small client for the parts of the GitHub REST API the plugin needs. Every
+ * call is a GET, which is safe to repeat, so requests go through undici's
+ * `RetryAgent`: it retries up to three times on throttling (429), server
+ * errors and dropped or timed out connections, honouring `Retry-After` up to
+ * 15 seconds. Once the retries run out the last response is reported. A call
+ * is given up after two minutes in total.
  */
 export class GitHubClient {
   private readonly token: string | undefined;
 
   private readonly send: typeof fetch;
 
-  private readonly dispatcher: Dispatcher | undefined;
+  private readonly dispatcher: Dispatcher;
+
+  private readonly endpoint: string;
 
   private readonly timeoutMs: number;
 
-  private readonly baseUrl: string;
-
   /**
-   * @param options Token, and the `fetch` and dispatcher to use.
+   * @param options The token, and test seams for the `fetch`, the dispatcher,
+   * the endpoint and the timeouts.
    */
   constructor(options: GitHubClientOptions) {
     this.token = options.token;
     this.send = options.fetch ?? fetch;
-    this.dispatcher = options.dispatcher;
-    this.baseUrl = options.baseUrl ?? API_ROOT;
-    this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.endpoint = options.endpoint ?? API_ROOT;
+    this.timeoutMs = options.timeoutMs ?? TOTAL_TIMEOUT_MS;
+    this.dispatcher = new RetryAgent(options.agent ?? connections(), {
+      maxRetries: 3,
+      minTimeout: options.minTimeout ?? 500,
+      maxTimeout: MAX_BACKOFF_MS,
+      timeoutFactor: 2,
+      methods: ['GET'],
+      errorCodes: RETRYABLE_ERROR_CODES,
+      // Hand back the last response once the retries run out, so that its
+      // status is mapped like any other.
+      throwOnError: false,
+    });
   }
 
   /**
@@ -186,14 +199,14 @@ export class GitHubClient {
    */
   async listReleaseTags(repo: string): Promise<readonly string[]> {
     const response = await this.send(
-      `${this.baseUrl}/repos/${repo}/releases?per_page=100`,
+      `${this.endpoint}/repos/${repo}/releases?per_page=100`,
       {
         headers: {
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
           ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
         },
-        dispatcher: this.dispatcher ?? createDispatcher(),
+        dispatcher: this.dispatcher,
         signal: AbortSignal.timeout(this.timeoutMs),
       },
     ).catch((error: unknown) => {
