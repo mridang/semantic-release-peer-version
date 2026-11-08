@@ -197,6 +197,7 @@ describe('GitHubClient against a local server', () => {
   const withServer = async (
     listener: RequestListener,
     run: (client: GitHubClient, port: number) => Promise<void>,
+    options: GitHubClientOptions = {},
   ): Promise<void> => {
     const server = createServer(listener);
     await new Promise<void>((resolve) =>
@@ -210,6 +211,7 @@ describe('GitHubClient against a local server', () => {
         new GitHubClient({
           endpoint: `http://127.0.0.1:${port}`,
           agent: new Agent(),
+          ...options,
         }),
         port,
       );
@@ -292,6 +294,94 @@ describe('GitHubClient against a local server', () => {
       await expect(client.listReleaseTags('o/r')).rejects.toThrow(
         /^Network error while attempting to fetch releases from o\/r: /,
       );
+    });
+  });
+
+  it.each([429, 503])('honours Retry-After on a %s', async (status) => {
+    const handler = jest
+      .fn<RequestListener>()
+      .mockImplementationOnce((_request, response) => {
+        response.writeHead(status, { 'Retry-After': '1' }).end('slow down');
+      })
+      .mockImplementation(full);
+    const started = Date.now();
+
+    await withServer(handler, async (client) => {
+      await expect(client.listReleaseTags('o/r')).resolves.toEqual(['v5.0.0']);
+    });
+
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+  });
+
+  it('never waits for Retry-After beyond the time left for the call', async () => {
+    const handler: RequestListener = (_request, response) => {
+      response.writeHead(503, { 'Retry-After': '3600' }).end('busy');
+    };
+    const started = Date.now();
+
+    await withServer(
+      handler,
+      async (client) => {
+        await expect(client.listReleaseTags('o/r')).rejects.toThrow(
+          /^Network error while attempting to fetch releases from o\/r: /,
+        );
+      },
+      { timeoutMs: 300 },
+    );
+
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it('gives up on a server that never answers once the time is up', async () => {
+    const started = Date.now();
+
+    await withServer(
+      () => undefined,
+      async (client) => {
+        await expect(client.listReleaseTags('o/r')).rejects.toThrow(
+          /^Network error while attempting to fetch releases from o\/r: /,
+        );
+      },
+      { timeoutMs: 200 },
+    );
+
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it('retries an attempt that stalls and keeps the overall deadline apart', async () => {
+    const handler = jest
+      .fn<RequestListener>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementation(full);
+
+    await withServer(
+      handler,
+      async (client) => {
+        await expect(client.listReleaseTags('o/r')).resolves.toEqual([
+          'v5.0.0',
+        ]);
+      },
+      { agent: new Agent({ headersTimeout: 100 }), minTimeout: 1 },
+    );
+
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it('follows a redirect to a renamed repository', async () => {
+    const handler: RequestListener = (request, response) => {
+      if (request.url?.startsWith('/repos/old/')) {
+        response
+          .writeHead(301, { Location: '/repos/new/r/releases?per_page=100' })
+          .end();
+      } else {
+        full(request, response);
+      }
+    };
+
+    await withServer(handler, async (client) => {
+      await expect(client.listReleaseTags('old/r')).resolves.toEqual([
+        'v5.0.0',
+      ]);
     });
   });
 

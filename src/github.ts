@@ -211,9 +211,11 @@ export class GitHubClient {
     this.dispatcher = new RetryAgent(options.agent ?? connections(), {
       maxRetries: 3,
       minTimeout: options.minTimeout ?? 500,
-      maxTimeout: MAX_BACKOFF_MS,
+      // A wait cannot be cancelled, so none may outlast the call itself.
+      maxTimeout: Math.min(MAX_BACKOFF_MS, this.timeoutMs),
       timeoutFactor: 2,
-      methods: ['GET'],
+      // Only methods that are safe to repeat; the client sends nothing else.
+      methods: ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'],
       errorCodes: RETRYABLE_ERROR_CODES,
       // Hand back the last response once the retries run out, so that its
       // status is mapped like any other.
