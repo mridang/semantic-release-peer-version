@@ -75,8 +75,11 @@ module.exports = {
       {
         repo: 'owner/repo',
         // Optional: GitHub token for private repos or to avoid rate limiting
-        // Defaults to process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+        // Not read from the environment: pass it explicitly
         // githubToken: process.env.UPSTREAM_GITHUB_TOKEN
+        // Optional: options for the commit analyzer that decides the release
+        // type. Without any, the conventionalcommits preset is used.
+        // commitAnalyzerConfig: { preset: 'angular' }
       },
     ],
     '@semantic-release/release-notes-generator',
@@ -87,6 +90,32 @@ module.exports = {
   ],
 };
 ```
+
+## Options
+
+- `repo` (required): the upstream repository, as `owner/name`. A value that
+  is not of that form fails with the error code `EINVALIDREPO` before any
+  request is made, and a missing one fails with `Missing required config
+"repo".`.
+- `githubToken` (optional): a token for the GitHub API. It is never read from
+  the environment, and it is only sent to the origin of the API request, never
+  to the target of a redirect to another host.
+- `commitAnalyzerConfig` (optional): the options passed to
+  `@semantic-release/commit-analyzer`. When it is missing or empty, the
+  `conventionalcommits` preset is used.
+
+## Network behaviour
+
+Reading the upstream releases is retried: throttling (429), server errors
+(500, 502, 503, 504), dropped connections and timeouts are tried again up to
+three times with a growing wait, honouring `Retry-After` for up to 15 seconds.
+An attempt that stalls for 30 seconds is abandoned, and the whole lookup is
+given up after two minutes. A redirect (for example for a renamed repository)
+is followed up to three times, but only when it stays on the same origin; a
+redirect to another host, or from https to http, ends the lookup with the
+error code `EREDIRECT`. The `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`
+environment variables are honoured; an invalid proxy URL fails with the error
+code `EPROXY` (the value is not shown, as it may hold credentials).
 
 ## Known Issues
 
