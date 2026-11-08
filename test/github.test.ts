@@ -90,7 +90,10 @@ describe('GitHubClient.listReleaseTags', () => {
     [404, undefined, /The repository was not found or it is private/],
     [404, 'TOKEN', /does not have 'repo' scope access to it/],
     [401, 'TOKEN', /Authentication failed/],
-    [403, 'TOKEN', /Access forbidden/],
+    [403, 'TOKEN', /Access forbidden. The provided GitHub token might lack/],
+    [403, undefined, /Access forbidden. No GitHub token was provided/],
+    [429, undefined, /throttling requests.*Providing a GitHub token raises/],
+    [429, 'TOKEN', /throttling requests.*Try again later/],
     [500, undefined, /Please check repository URL, token permissions/],
   ])('explains HTTP %s (token: %s)', async (status, token, message) => {
     const client = new GitHubClient({
@@ -133,6 +136,46 @@ describe('GitHubClient repo check', () => {
       expect(send).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('GitHubClient failure messages', () => {
+  const limited = (token?: string) =>
+    new GitHubClient({
+      token,
+      fetch: jest.fn<Fetch>(
+        async () =>
+          new Response('{"message":"API rate limit exceeded for 1.2.3.4."}', {
+            status: 403,
+            statusText: 'rate limited',
+            headers: { 'x-ratelimit-remaining': '0' },
+          }),
+      ),
+    });
+
+  it('names the rate limit and does not blame a token that was not sent', async () => {
+    const error = await limited()
+      .listReleaseTags('o/r')
+      .catch((e: unknown) => e);
+
+    expect(messageOf(error)).toContain('No GitHub token was provided');
+    expect(messageOf(error)).not.toContain('might lack required scopes');
+  });
+
+  it('does not suggest a token when one was used', async () => {
+    const error = await limited('TOKEN')
+      .listReleaseTags('o/r')
+      .catch((e: unknown) => e);
+
+    expect(messageOf(error)).toContain(
+      'rate limit was exceeded. Try again later.',
+    );
+  });
+
+  it("ends with GitHub's own message", async () => {
+    await expect(limited().listReleaseTags('o/r')).rejects.toThrow(
+      /GitHub said: API rate limit exceeded for 1\.2\.3\.4\.$/,
+    );
+  });
 });
 
 describe('GitHubClient retries', () => {

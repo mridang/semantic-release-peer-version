@@ -89,36 +89,6 @@ function parseReleaseTags(payload: unknown): readonly string[] | undefined {
 }
 
 /**
- * Explain a failed releases request.
- *
- * @param repo The repository, as `owner/repo`.
- * @param status HTTP status of the response.
- * @param statusText HTTP status text of the response.
- * @param hasToken Whether the request was authenticated.
- * @returns The message of the error to throw.
- */
-function describeFailure(
-  repo: string,
-  status: number,
-  statusText: string,
-  hasToken: boolean,
-): string {
-  const prefix = `Failed to fetch releases from ${repo} (${status} ${statusText}).`;
-  switch (status) {
-    case 404:
-      return hasToken
-        ? `${prefix} Repository not found, or the provided GitHub token does not have 'repo' scope access to it.`
-        : `${prefix} The repository was not found or it is private. For private repositories, please provide a GitHub token with 'repo' scope.`;
-    case 401:
-      return `${prefix} Authentication failed. The provided GitHub token is likely invalid, expired, or does not have the 'repo' scope.`;
-    case 403:
-      return `${prefix} Access forbidden. The provided GitHub token might lack required scopes (e.g., 'repo'), or an API rate limit was exceeded. Check token scopes and GitHub's rate limit documentation.`;
-    default:
-      return `${prefix} Please check repository URL, token permissions, and GitHub status page.`;
-  }
-}
-
-/**
  * What GitHub answered, with the body already read.
  */
 interface Reply {
@@ -126,6 +96,54 @@ interface Reply {
   readonly status: number;
   readonly statusText: string;
   readonly text: string;
+
+  /**
+   * Whether GitHub said the rate limit is used up (`x-ratelimit-remaining`).
+   */
+  readonly rateLimited: boolean;
+}
+
+/**
+ * Explain a failed releases request.
+ *
+ * @param repo The repository, as `owner/repo`.
+ * @param reply The failed reply.
+ * @param hasToken Whether the request was authenticated.
+ * @returns The message of the error to throw, ending with GitHub's own words
+ * when it sent some.
+ */
+function describeFailure(
+  repo: string,
+  reply: Reply,
+  hasToken: boolean,
+): string {
+  const prefix = `Failed to fetch releases from ${repo} (${reply.status} ${reply.statusText}).`;
+  const body = parseJson(reply.text);
+  const said = isRecord(body) ? stringAt(body, 'message') : undefined;
+  const reason = ((): string => {
+    switch (reply.status) {
+      case 404:
+        return hasToken
+          ? `Repository not found, or the provided GitHub token does not have 'repo' scope access to it.`
+          : `The repository was not found or it is private. For private repositories, please provide a GitHub token with 'repo' scope.`;
+      case 401:
+        return `Authentication failed. The provided GitHub token is likely invalid, expired, or does not have the 'repo' scope.`;
+      case 429:
+        return `GitHub is throttling requests and kept doing so after several attempts. ${hasToken ? 'Try again later.' : 'Providing a GitHub token raises the limit.'}`;
+      case 403:
+        if (reply.rateLimited) {
+          return `The GitHub API rate limit was exceeded. ${hasToken ? 'Try again later.' : 'No GitHub token was provided, so the request counted against the much lower limit for anonymous requests; providing one raises it.'}`;
+        }
+        return hasToken
+          ? `Access forbidden. The provided GitHub token might lack required scopes (e.g., 'repo'), or an API rate limit was exceeded. Check token scopes and GitHub's rate limit documentation.`
+          : `Access forbidden. No GitHub token was provided; for private repositories, please provide one with 'repo' scope. An API rate limit may also have been exceeded.`;
+      default:
+        return `Please check repository URL, token permissions, and GitHub status page.`;
+    }
+  })();
+  return said === undefined
+    ? `${prefix} ${reason}`
+    : `${prefix} ${reason} GitHub said: ${said}`;
 }
 
 /**
@@ -247,12 +265,7 @@ export class GitHubClient {
 
     if (!reply.ok) {
       throw new SemanticReleaseError(
-        describeFailure(
-          repo,
-          reply.status,
-          reply.statusText,
-          Boolean(this.token),
-        ),
+        describeFailure(repo, reply, Boolean(this.token)),
       );
     }
 
@@ -317,6 +330,7 @@ export class GitHubClient {
       status: response.status,
       statusText: response.statusText,
       text: text.body,
+      rateLimited: response.headers.get('x-ratelimit-remaining') === '0',
     };
   }
 }
