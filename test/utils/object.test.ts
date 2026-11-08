@@ -20,6 +20,10 @@ describe('stringAt', () => {
     expect(stringAt(record, 's')).toBe('x');
   });
 
+  it('ignores inherited properties', () => {
+    expect(stringAt(Object.create({ s: 'inherited' }), 's')).toBeUndefined();
+  });
+
   it('gives undefined for a missing property or the wrong type', () => {
     expect(stringAt(record, 'n')).toBeUndefined();
     expect(stringAt(record, 'other')).toBeUndefined();
