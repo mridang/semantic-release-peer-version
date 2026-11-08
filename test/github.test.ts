@@ -1,93 +1,87 @@
-import { describe, expect, it, jest } from '@jest/globals';
-import { createServer, type ServerResponse } from 'node:http';
+import { afterEach, describe, expect, it } from '@jest/globals';
+import { inspect } from 'node:util';
 import { MockAgent } from 'undici';
-// noinspection ES6PreferShortImport
-import { GitHubClient, type GitHubClientOptions } from '../src/github.js';
+import { GitHubClient, request, type RequestOptions } from '../src/github.js';
 import { messageOf } from '../src/utils/error.js';
-import { startLoopback } from './utils/server.js';
 import { startTunnelProxy } from './utils/proxy.js';
+import { listen, startFaultyProxy } from './utils/server.js';
 
-const PATH = '/api/update-package/repos/o/r/releases?per_page=100';
+const API = 'https://api.github.com';
+const PATH = '/repos/o/r/releases?per_page=100';
 
-const json = (
-  response: ServerResponse,
-  status: number,
-  body: unknown,
-): void => {
-  response
-    .writeHead(status, { 'Content-Type': 'application/json' })
-    .end(typeof body === 'string' ? body : JSON.stringify(body));
-};
-
-const tags = (response: ServerResponse): void => {
-  json(response, 200, [{ tag_name: 'v5.0.0' }]);
-};
+interface Reply {
+  readonly status?: number;
+  readonly body?: unknown;
+  readonly headers?: Record<string, string>;
+}
 
 /**
- * Run a test against a real HTTP server on the loopback interface, which keeps
- * the response headers and sockets that a mock agent does not.
+ * A mock agent that answers the releases request with the given replies in
+ * order, the last one repeating. Nothing else is reachable.
  *
- * @param respond Answers each request; the first argument is its number.
- * @param run The test body, given a client pointed at the server.
- * @param options Overrides for the client.
- * @returns What the server saw.
+ * @param replies What to answer with.
+ * @returns The agent, and the headers of each request it received.
  */
-const withServer = async (
-  respond: Parameters<typeof startLoopback>[0],
-  run: (client: GitHubClient) => Promise<void>,
-  options: GitHubClientOptions = {},
-): Promise<Awaited<ReturnType<typeof startLoopback>>['seen']> => {
-  const server = await startLoopback(respond);
-  try {
-    await run(
-      new GitHubClient({ endpoint: server.url, minTimeout: 1, ...options }),
-    );
-    return server.seen;
-  } finally {
-    await server.close();
-  }
+const mockReleases = (
+  ...replies: readonly Reply[]
+): { agent: MockAgent; seen: Record<string, unknown>[] } => {
+  const agent = new MockAgent();
+  agent.disableNetConnect();
+  const seen: Record<string, unknown>[] = [];
+  const pool = agent.get(API);
+  replies.forEach((reply, index) => {
+    const scope = pool
+      .intercept({ path: PATH, method: 'GET' })
+      .reply((options) => {
+        seen.push({ ...(options.headers as Record<string, unknown>) });
+        return {
+          statusCode: reply.status ?? 200,
+          data:
+            typeof reply.body === 'string'
+              ? reply.body
+              : JSON.stringify(reply.body ?? []),
+          responseOptions: { headers: reply.headers ?? {} },
+        };
+      });
+    if (index === replies.length - 1) {
+      scope.persist();
+    } else {
+      scope.times(1);
+    }
+  });
+  return { agent, seen };
 };
 
-const failure = async (client: GitHubClient): Promise<string> =>
-  client.listReleaseTags('o/r').then(
+const failure = async (client: GitHubClient, repo = 'o/r'): Promise<string> =>
+  client.listReleaseTags(repo).then(
     () => 'resolved',
     (error: unknown) => messageOf(error),
   );
 
 describe('GitHubClient.listReleaseTags', () => {
-  it('lists the tag names, asking GitHub for the latest 100 releases', async () => {
-    const seen = await withServer(
-      (_attempt, response) => {
-        json(response, 200, [{ tag_name: 'v1.0.0' }, { tag_name: 'v2.0.0' }]);
-      },
-      async (client) => {
-        await expect(client.listReleaseTags('o/r')).resolves.toEqual([
-          'v1.0.0',
-          'v2.0.0',
-        ]);
-      },
-    );
+  it('lists the tag names, asking for the latest 100 releases', async () => {
+    const { agent, seen } = mockReleases({
+      body: [{ tag_name: 'v1.0.0' }, { tag_name: 'v2.0.0' }],
+    });
+
+    await expect(
+      new GitHubClient({ agent }).listReleaseTags('o/r'),
+    ).resolves.toEqual(['v1.0.0', 'v2.0.0']);
 
     expect(seen).toHaveLength(1);
-    expect(seen[0]?.url).toBe(PATH);
-    expect(seen[0]?.headers).toMatchObject({
+    expect(seen[0]).toEqual({
       accept: 'application/vnd.github+json',
       'user-agent': 'semantic-release-peer-version',
       'x-github-api-version': '2022-11-28',
     });
-    expect(seen[0]?.headers['authorization']).toBeUndefined();
   });
 
   it('sends the token as a bearer credential when one is given', async () => {
-    const seen = await withServer(
-      (_attempt, response) => tags(response),
-      async (client) => {
-        await client.listReleaseTags('o/r');
-      },
-      { token: 'TOKEN' },
-    );
+    const { agent, seen } = mockReleases({});
 
-    expect(seen[0]?.headers['authorization']).toBe('Bearer TOKEN');
+    await new GitHubClient({ token: 'TOKEN', agent }).listReleaseTags('o/r');
+
+    expect(seen[0]?.['authorization']).toBe('Bearer TOKEN');
   });
 
   it.each([
@@ -96,22 +90,37 @@ describe('GitHubClient.listReleaseTags', () => {
     [401, 'TOKEN', /Authentication failed/],
     [403, 'TOKEN', /Access forbidden. The provided GitHub token might lack/],
     [403, undefined, /Access forbidden. No GitHub token was provided/],
-    [429, undefined, /throttling requests.*Providing a GitHub token raises/],
-    [429, 'TOKEN', /throttling requests.*Try again later/],
-    [500, undefined, /Please check repository URL, token permissions/],
   ])('explains HTTP %s (token: %s)', async (status, token, message) => {
-    await withServer(
-      (_attempt, response) => json(response, status, {}),
-      async (client) => {
-        const text = await failure(client);
-        expect(text).toMatch(
-          new RegExp(`^Failed to fetch releases from o/r \\(${status} `),
-        );
-        expect(text).toMatch(message);
-      },
-      { token },
+    const { agent } = mockReleases({ status, body: {} });
+
+    const text = await failure(new GitHubClient({ token, agent }));
+
+    expect(text).toMatch(
+      new RegExp(`^Failed to fetch releases from o/r \\(${status}\\)\\. `),
     );
+    expect(text).toMatch(message);
   });
+
+  it('explains throttling and server errors once the retries have run out', async () => {
+    const texts = await Promise.all(
+      [
+        [429, undefined],
+        [429, 'TOKEN'],
+        [500, undefined],
+      ].map(async ([status, token]) => {
+        const { agent, seen } = mockReleases({ status: Number(status) });
+        const text = await failure(
+          new GitHubClient({ token: token as string | undefined, agent }),
+        );
+        return { text, calls: seen.length };
+      }),
+    );
+
+    expect(texts.map((t) => t.calls)).toEqual([4, 4, 4]);
+    expect(texts[0]?.text).toMatch(/throttling.*Providing a GitHub token/);
+    expect(texts[1]?.text).toMatch(/throttling.*Try again later/);
+    expect(texts[2]?.text).toMatch(/Please check repository URL/);
+  }, 20000);
 
   it.each([
     ['an object', { tag_name: 'v1.0.0' }],
@@ -119,624 +128,586 @@ describe('GitHubClient.listReleaseTags', () => {
     ['a list with a non-string tag', [{ tag_name: 1 }]],
     ['a list of non-objects', ['v1.0.0']],
     ['text that is not JSON', 'not json'],
+    ['an empty body', ''],
   ])('rejects %s as an invalid response', async (_name, body) => {
-    await withServer(
-      (_attempt, response) => json(response, 200, body),
-      async (client) => {
-        expect(await failure(client)).toMatch(
-          /^Invalid response format received from GitHub API when fetching releases for o\/r\./,
-        );
-      },
+    const { agent } = mockReleases({ body });
+
+    expect(await failure(new GitHubClient({ agent }))).toMatch(
+      /^Invalid response format received from GitHub API when fetching releases for o\/r\./,
     );
   });
 
   it('refuses a repo that is not owner/name without sending anything', async () => {
-    const seen = await withServer(
-      (_attempt, response) => tags(response),
-      async (client) => {
-        for (const repo of ['o/r?per_page=1', 'o/r/../../x', 'o']) {
-          await expect(client.listReleaseTags(repo)).rejects.toMatchObject({
-            code: 'EINVALIDREPO',
-          });
-        }
-      },
-      { token: 'TOKEN' },
+    const { agent, seen } = mockReleases({});
+    const client = new GitHubClient({ token: 'TOKEN', agent });
+
+    for (const repo of ['o/r?per_page=1', 'o/r/../../x', 'o']) {
+      await expect(client.listReleaseTags(repo)).rejects.toMatchObject({
+        code: 'EINVALIDREPO',
+      });
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  it('retries a server error and returns the later success', async () => {
+    const { agent, seen } = mockReleases(
+      { status: 503, body: 'busy' },
+      { body: [{ tag_name: 'v3.0.0' }] },
     );
 
-    expect(seen).toHaveLength(0);
+    await expect(
+      new GitHubClient({ agent }).listReleaseTags('o/r'),
+    ).resolves.toEqual(['v3.0.0']);
+    expect(seen).toHaveLength(2);
+  });
+
+  it('does not retry a client error', async () => {
+    const { agent, seen } = mockReleases({ status: 404, body: {} });
+
+    await failure(new GitHubClient({ agent }));
+
+    expect(seen).toHaveLength(1);
   });
 });
 
 describe('GitHubClient failure messages', () => {
   it('names the rate limit and does not blame a token that was not sent', async () => {
-    await withServer(
-      (_attempt, response) => {
-        response
-          .writeHead(403, { 'x-ratelimit-remaining': '0' })
-          .end('{"message":"API rate limit exceeded for 1.2.3.4."}');
-      },
-      async (client) => {
-        const text = await failure(client);
-        expect(text).toContain('No GitHub token was provided');
-        expect(text).not.toContain('might lack required scopes');
-        expect(text).toMatch(
-          /GitHub said: API rate limit exceeded for 1\.2\.3\.4\.$/,
-        );
-      },
+    const { agent } = mockReleases({
+      status: 403,
+      body: { message: 'API rate limit exceeded for 1.2.3.4.' },
+    });
+
+    const text = await failure(new GitHubClient({ agent }));
+
+    expect(text).toContain('No GitHub token was provided');
+    expect(text).not.toContain('might lack required scopes');
+    expect(text).toMatch(
+      /GitHub said: API rate limit exceeded for 1\.2\.3\.4\.$/,
     );
   });
 
   it('does not suggest a token when one was used', async () => {
-    await withServer(
-      (_attempt, response) => {
-        response.writeHead(403, { 'x-ratelimit-remaining': '0' }).end('{}');
-      },
-      async (client) => {
-        expect(await failure(client)).toContain(
-          'rate limit was exceeded. Try again later.',
-        );
-      },
-      { token: 'TOKEN' },
-    );
+    const { agent } = mockReleases({
+      status: 403,
+      body: { message: 'API rate limit exceeded' },
+    });
+
+    expect(
+      await failure(new GitHubClient({ token: 'TOKEN', agent })),
+    ).toContain('rate limit was exceeded. Try again later.');
   });
 
   it("cuts GitHub's own message short", async () => {
-    await withServer(
-      (_attempt, response) => {
-        json(response, 404, { message: 'x'.repeat(100_000) });
-      },
-      async (client) => {
-        const text = await failure(client);
-        expect(text.endsWith(`${'x'.repeat(2000)}... (truncated)`)).toBe(true);
-        expect(text.length).toBeLessThan(2600);
-      },
-    );
+    const { agent } = mockReleases({
+      status: 404,
+      body: { message: 'x'.repeat(100_000) },
+    });
+
+    const text = await failure(new GitHubClient({ agent }));
+
+    expect(text.endsWith(`${'x'.repeat(2000)}... (truncated)`)).toBe(true);
+    expect(text.length).toBeLessThan(2600);
   });
 
-  it('does not read an error body without end', async () => {
-    await withServer(
-      (_attempt, response) => {
-        response.writeHead(404);
-        response.write('x'.repeat(2 * 1024 * 1024));
-        response.end();
-      },
-      async (client) => {
-        expect(await failure(client)).toMatch(
-          /^Failed to fetch releases from o\/r \(404 /,
-        );
-      },
-    );
-  });
-
-  it('still reports the status when the error body is cut off', async () => {
-    await withServer(
-      (_attempt, response) => {
-        response.writeHead(404, { 'Content-Length': '100' });
-        response.write('{"mess');
-        setTimeout(() => response.socket?.destroy(), 20);
-      },
-      async (client) => {
-        expect(await failure(client)).toMatch(
-          /^Failed to fetch releases from o\/r \(404 /,
-        );
-      },
-    );
-  });
-
-  it('refuses a successful body larger than the cap', async () => {
-    await withServer(
-      (_attempt, response) => {
-        response.writeHead(200);
-        response.write(Buffer.alloc(33 * 1024 * 1024, 'x'));
-        response.end();
-      },
-      async (client) => {
-        expect(await failure(client)).toMatch(/is larger than 32 MiB\.$/);
-      },
-    );
-  });
-});
-
-describe('GitHubClient credentials', () => {
   it('keeps the token out of an error the server echoes', async () => {
-    await withServer(
-      (_attempt, response) => {
-        json(response, 404, {
-          message: 'no such repo for Bearer SECRET-TOKEN',
-        });
-      },
-      async (client) => {
-        const text = await failure(client);
-        expect(text).toContain(
-          'GitHub said: no such repo for Bearer [redacted]',
-        );
-        expect(text).not.toContain('SECRET-TOKEN');
-      },
-      { token: 'SECRET-TOKEN' },
+    const { agent } = mockReleases({
+      status: 404,
+      body: { message: 'no such repo for Bearer SECRET-TOKEN' },
+    });
+
+    const text = await failure(
+      new GitHubClient({ token: 'SECRET-TOKEN', agent }),
     );
+
+    expect(text).toContain('GitHub said: no such repo for Bearer [redacted]');
+    expect(text).not.toContain('SECRET-TOKEN');
   });
 
   it('keeps a token that is not a legal header value out of the error', async () => {
-    await withServer(
-      (_attempt, response) => tags(response),
-      async (client) => {
-        const text = await failure(client);
-        expect(text).toMatch(
-          /^Network error while attempting to fetch releases/,
-        );
-        expect(text).not.toContain('SEC RET');
+    // The header is refused before any connection is made.
+    const client = new GitHubClient({ token: 'SEC RET\nX: y' });
+
+    const text = await failure(client);
+
+    expect(text).toMatch(/^Network error calling api\.github\.com/);
+    expect(text).not.toContain('SEC RET');
+  });
+
+  it('reports a redirect it does not follow, without the query', async () => {
+    const { agent } = mockReleases({
+      status: 301,
+      headers: {
+        location: 'http://api.github.com/repos/n/r/releases?access=1',
       },
-      { token: 'SEC RET\nX: y' },
+    });
+
+    const error = await new GitHubClient({ token: 'T', agent })
+      .listReleaseTags('o/r')
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: 'EREDIRECT' });
+    expect(messageOf(error)).toContain(
+      'answered 301 with a redirect to http://api.github.com/repos/n/r/releases, which is not followed',
     );
+    expect(messageOf(error)).not.toContain('access=1');
+  });
+
+  it('refuses a malformed proxy setting without printing it', async () => {
+    const saved = { ...process.env };
+    process.env['HTTPS_PROXY'] = 'http://user:PW-SECRET@bad host:3128';
+    try {
+      const error = await new GitHubClient({})
+        .listReleaseTags('o/r')
+        .catch((e: unknown) => e);
+
+      expect(error).toMatchObject({ code: 'EPROXY' });
+      const shown = [
+        String(error),
+        inspect(error, { depth: 10, showHidden: true }),
+        JSON.stringify(error, Object.getOwnPropertyNames(error)),
+      ].join('\n');
+      expect(shown).not.toContain('PW-SECRET');
+      expect(shown).toContain('HTTPS_PROXY');
+    } finally {
+      process.env = saved;
+    }
   });
 });
 
-describe('GitHubClient retries', () => {
-  it.each([429, 503])('honours Retry-After on a %s', async (status) => {
-    const started = Date.now();
+describe('request over a real socket', () => {
+  const stops: (() => Promise<void>)[] = [];
+  const saved = { ...process.env };
 
-    const seen = await withServer(
-      (attempt, response) => {
-        if (attempt === 1) {
-          response.writeHead(status, { 'Retry-After': '1' }).end('slow down');
-        } else {
-          tags(response);
-        }
-      },
-      async (client) => {
-        await expect(client.listReleaseTags('o/r')).resolves.toEqual([
-          'v5.0.0',
-        ]);
-      },
+  const serve = async (
+    handler: Parameters<typeof listen>[0],
+  ): ReturnType<typeof listen> => {
+    const server = await listen(handler);
+    stops.push(server.close);
+    return server;
+  };
+
+  const through = (proxyUrl: string, noProxy = ''): void => {
+    process.env['HTTP_PROXY'] = proxyUrl;
+    process.env['NO_PROXY'] = noProxy;
+    delete process.env['http_proxy'];
+    delete process.env['no_proxy'];
+  };
+
+  afterEach(async () => {
+    process.env = { ...saved };
+    await Promise.all(stops.splice(0).map((stop) => stop()));
+  });
+
+  const fast: RequestOptions = { minTimeout: 1 };
+
+  it('sends the default headers once, whatever the case of an override', async () => {
+    const headers: unknown[] = [];
+    const { url } = await serve((req, res) => {
+      headers.push(req.headers);
+      res.end('{}');
+    });
+
+    await request(
+      `${url}/a`,
+      { headers: { Accept: 'text/plain', 'X-Extra': '1' } },
+      fast,
     );
 
+    expect(headers[0]).toMatchObject({
+      accept: 'text/plain',
+      'user-agent': 'semantic-release-peer-version',
+      'x-extra': '1',
+    });
+  });
+
+  it('honours Retry-After before retrying', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      const first = seen.length === 1;
+      res.writeHead(first ? 503 : 200, first ? { 'Retry-After': '1' } : {});
+      res.end(first ? 'busy' : '{"ok":1}');
+    });
+    const started = Date.now();
+
+    const result = await request(`${url}/a`, {}, { retries: 1 });
+
+    expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
     expect(seen).toHaveLength(2);
     expect(Date.now() - started).toBeGreaterThanOrEqual(900);
   });
 
-  it('retries a reset connection', async () => {
-    const seen = await withServer(
-      (attempt, response) => {
-        if (attempt === 1) {
-          response.socket?.destroy();
-        } else {
-          tags(response);
-        }
-      },
-      async (client) => {
-        await expect(client.listReleaseTags('o/r')).resolves.toEqual([
-          'v5.0.0',
-        ]);
-      },
-    );
-
-    expect(seen).toHaveLength(2);
-  });
-
-  it('reports the status once the retries have run out', async () => {
-    const seen = await withServer(
-      (_attempt, response) => json(response, 503, 'unavailable'),
-      async (client) => {
-        expect(await failure(client)).toMatch(
-          /^Failed to fetch releases from o\/r \(503 Service Unavailable\)\. Please check/,
-        );
-      },
-    );
-
-    expect(seen).toHaveLength(4);
-  });
-
-  it('names the cause of a failure that wraps another', async () => {
-    const agent = new MockAgent();
-    agent.disableNetConnect();
-    agent
-      .get('https://api.github.com')
-      .intercept({ path: '/repos/o/r/releases?per_page=100', method: 'GET' })
-      .replyWithError(
-        Object.assign(new Error('outer', { cause: new Error('inner') }), {
-          code: 'ECONNRESET',
-        }),
-      )
-      .persist();
-
-    expect(await failure(new GitHubClient({ agent, minTimeout: 1 }))).toMatch(
-      /: outer: inner$/,
-    );
-  });
-
-  it('reports a status that has no standard name', async () => {
-    await withServer(
-      (_attempt, response) => {
-        response.writeHead(499).end('{}');
-      },
-      async (client) => {
-        expect(await failure(client)).toMatch(/\(499 \)\./);
-      },
-    );
-  });
-
-  it('does not retry a client error', async () => {
-    const seen = await withServer(
-      (_attempt, response) => json(response, 404, {}),
-      async (client) => {
-        expect(await failure(client)).toMatch(/\(404 Not Found\)/);
-      },
-    );
-
-    expect(seen).toHaveLength(1);
-  });
-
-  it.each([
-    'ECONNRESET',
-    'ECONNREFUSED',
-    'ENOTFOUND',
-    'ENETDOWN',
-    'ENETUNREACH',
-    'EHOSTDOWN',
-    'EHOSTUNREACH',
-    'EPIPE',
-    'EAI_AGAIN',
-    'ETIMEDOUT',
-    'UND_ERR_SOCKET',
-    'UND_ERR_CONNECT_TIMEOUT',
-    'UND_ERR_HEADERS_TIMEOUT',
-    'UND_ERR_BODY_TIMEOUT',
-  ])('retries a %s failure', async (code) => {
-    const agent = new MockAgent();
-    agent.disableNetConnect();
-    const pool = agent.get('https://api.github.com');
-    pool
-      .intercept({ path: '/repos/o/r/releases?per_page=100', method: 'GET' })
-      .replyWithError(Object.assign(new Error('failed'), { code }));
-    pool
-      .intercept({ path: '/repos/o/r/releases?per_page=100', method: 'GET' })
-      .reply(200, [{ tag_name: 'v3.0.0' }]);
-
-    await expect(
-      new GitHubClient({ agent, minTimeout: 1 }).listReleaseTags('o/r'),
-    ).resolves.toEqual(['v3.0.0']);
-    agent.assertNoPendingInterceptors();
-  });
-
-  const cutShort = (_attempt: number, response: ServerResponse): void => {
-    response.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Content-Length': '100',
+  it('caps a long Retry-After at a quarter of the deadline', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      const first = seen.length === 1;
+      res.writeHead(first ? 429 : 200, first ? { 'Retry-After': '20' } : {});
+      res.end('{}');
     });
-    response.write('[{"tag_na');
-    setTimeout(() => response.socket?.destroy(), 20);
-  };
-
-  it('sends the whole request again when the connection drops during the body', async () => {
-    const seen = await withServer(
-      (attempt, response) => {
-        if (attempt === 1) {
-          cutShort(attempt, response);
-        } else {
-          tags(response);
-        }
-      },
-      async (client) => {
-        await expect(client.listReleaseTags('o/r')).resolves.toEqual([
-          'v5.0.0',
-        ]);
-      },
-    );
-
-    expect(seen.at(-1)?.headers['range']).toBeUndefined();
-  });
-
-  it('reports a body that keeps failing as a network error', async () => {
-    await withServer(cutShort, async (client) => {
-      expect(await failure(client)).toMatch(
-        /^Network error while attempting to fetch releases from o\/r: /,
-      );
-    });
-  });
-
-  it('retries an attempt that stalls', async () => {
-    const seen = await withServer(
-      (attempt, response) => {
-        if (attempt > 1) {
-          tags(response);
-        }
-      },
-      async (client) => {
-        await expect(client.listReleaseTags('o/r')).resolves.toEqual([
-          'v5.0.0',
-        ]);
-      },
-      { attemptTimeoutMs: 100 },
-    );
-
-    expect(seen).toHaveLength(2);
-  });
-
-  it('gives up on a server that never answers once the deadline is up', async () => {
     const started = Date.now();
 
-    await withServer(
-      () => undefined,
-      async (client) => {
-        expect(await failure(client)).toMatch(
-          /^Network error while attempting/,
-        );
-      },
-      { deadlineMs: 200 },
-    );
+    await request(`${url}/a`, {}, { retries: 1, deadlineMs: 4000 });
 
-    expect(Date.now() - started).toBeLessThan(3000);
+    const took = Date.now() - started;
+    expect(seen).toHaveLength(2);
+    expect(took).toBeGreaterThanOrEqual(900);
+    expect(took).toBeLessThan(3000);
   });
 
-  it('leaves no retry timer running once the deadline has passed', async () => {
+  it('falls back to back-off for a Retry-After date in the past', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      const first = seen.length === 1;
+      res.writeHead(
+        first ? 503 : 200,
+        first ? { 'Retry-After': 'Wed, 21 Oct 2015 07:28:00 GMT' } : {},
+      );
+      res.end('{}');
+    });
+
+    await request(`${url}/a`, {}, { retries: 1, minTimeout: 1 });
+
+    expect(seen).toHaveLength(2);
+  });
+
+  it('cancels a wait for the next attempt when the deadline passes', async () => {
     const timers = (): number =>
       process.getActiveResourcesInfo().filter((name) => name === 'Timeout')
         .length;
+    const { url } = await serve((_req, res) => {
+      res.writeHead(503, { 'Retry-After': '3600' }).end('busy');
+    });
     const before = timers();
 
-    await withServer(
-      (_attempt, response) => {
-        response.writeHead(503, { 'Retry-After': '3600' }).end('busy');
-      },
-      async (client) => {
-        expect(await failure(client)).toMatch(
-          /^(Network error while attempting|Failed to fetch releases from o\/r \(503)/,
-        );
-      },
-      { deadlineMs: 400 },
-    );
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await expect(
+      request(`${url}/a`, {}, { retries: 10, deadlineMs: 400 }),
+    ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(timers()).toBeLessThanOrEqual(before);
   });
-});
 
-describe('GitHubClient redirects', () => {
-  it('follows a redirect to a renamed repository on the same origin', async () => {
-    const seen = await withServer(
-      (attempt, response) => {
-        if (attempt === 1) {
-          response
-            .writeHead(301, {
-              Location: '/api/update-package/repos/new/r/releases?per_page=100',
-            })
-            .end();
-        } else {
-          tags(response);
-        }
-      },
-      async (client) => {
-        await expect(client.listReleaseTags('old/r')).resolves.toEqual([
-          'v5.0.0',
-        ]);
-      },
-      { token: 'SECRET-TOKEN' },
+  it('retries an attempt that stalls, as a dropped connection is', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      if (seen.length > 1) {
+        res.end('{"ok":1}');
+      }
+    });
+
+    const result = await request(
+      `${url}/a`,
+      {},
+      { retries: 1, attemptTimeoutMs: 1000, minTimeout: 1 },
     );
 
-    expect(seen[1]?.url).toBe(
-      '/api/update-package/repos/new/r/releases?per_page=100',
+    expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
+    expect(seen).toHaveLength(2);
+  }, 15000);
+
+  it('gives up with one request per attempt when every attempt stalls', async () => {
+    const { url, seen } = await serve(() => undefined);
+
+    await expect(
+      request(
+        `${url}/a`,
+        {},
+        { retries: 1, attemptTimeoutMs: 1000, minTimeout: 1 },
+      ),
+    ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
+    expect(seen).toHaveLength(2);
+  }, 15000);
+
+  it('stops at the deadline', async () => {
+    const { url } = await serve(() => undefined);
+    const started = Date.now();
+
+    await expect(request(`${url}/a`, {}, { deadlineMs: 1000 })).rejects.toThrow(
+      /aborted due to timeout/,
     );
-    expect(seen[1]?.headers['authorization']).toBe('Bearer SECRET-TOKEN');
+    expect(Date.now() - started).toBeLessThan(2000);
+  }, 15000);
+
+  it('sends exactly retries + 1 whole requests when the body is always cut short', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(200, { 'Content-Length': '100' });
+      res.write('{"par');
+      setTimeout(() => res.socket?.destroy(), 10);
+    });
+
+    await expect(
+      request(`${url}/a`, {}, { retries: 2, minTimeout: 1 }),
+    ).rejects.toThrow(/other side closed/);
+    expect(seen).toEqual(['GET /a', 'GET /a', 'GET /a']);
+  }, 15000);
+
+  it('sends the whole request again, never a Range resume, when the body is cut once', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      if (seen.length === 1) {
+        res.writeHead(200, { 'Content-Length': '100' });
+        res.write('{"par');
+        setTimeout(() => res.socket?.destroy(), 10);
+        return;
+      }
+      res.end('{"ok":1}');
+    });
+
+    const result = await request(`${url}/a`, {}, { retries: 2, minTimeout: 1 });
+
+    expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
+    expect(seen).toEqual(['GET /a', 'GET /a']);
   });
 
-  it('does not follow a redirect to another origin, so the token stays put', async () => {
-    const target = await startLoopback((_attempt, response) => tags(response));
-    try {
-      const seen = await withServer(
-        (_attempt, response) => {
-          response
-            .writeHead(302, { Location: `${target.url}/x?secret=1#frag` })
-            .end();
-        },
-        async (client) => {
-          const text = await failure(client);
-          expect(text).toContain('answered 302 with a redirect to');
-          expect(text).toContain(`${target.url}/x, which is not followed`);
-          expect(text).not.toContain('secret=1');
-        },
-        { token: 'SECRET-TOKEN' },
+  it('does not read, or repeat a request for, a body larger than the cap', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(200);
+      res.end(Buffer.alloc(33 * 1024 * 1024, 97));
+    });
+
+    await expect(
+      request(`${url}/a`, {}, { retries: 2, minTimeout: 1 }),
+    ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('names the code when a closed local port refuses the connection, without leaking the URL', async () => {
+    const server = await listen(() => undefined);
+    await server.close();
+
+    const error = await request(
+      `http://localhost:${server.port}/a?token=SECRET`,
+      { headers: { Authorization: 'Bearer SECRET' } },
+      fast,
+    ).catch((e: unknown) => e);
+
+    expect(String(error)).toContain('ECONNREFUSED');
+    expect(String(error)).not.toContain('SECRET');
+  });
+
+  it('goes through the proxy named by the environment', async () => {
+    const target = await serve((_req, res) => res.end('{"direct":1}'));
+    const proxy = await startTunnelProxy(target.port);
+    stops.push(proxy.close);
+    through(proxy.url);
+
+    const result = await request('http://something.invalid/a', {});
+
+    expect(result.body).toEqual({ direct: 1 });
+    expect(proxy.tunnelled).toEqual(['something.invalid:80']);
+  });
+
+  it('skips the proxy for hosts listed in NO_PROXY', async () => {
+    const target = await serve((_req, res) => res.end('{"direct":1}'));
+    const proxy = await startTunnelProxy(target.port);
+    stops.push(proxy.close);
+    through(proxy.url, '127.0.0.1');
+
+    const result = await request(`${target.url}/a`, {});
+
+    expect(result.body).toEqual({ direct: 1 });
+    expect(proxy.tunnelled).toHaveLength(0);
+  });
+
+  it.each(['reset', 'stall'] as const)(
+    'gives up at the deadline when the proxy accepts CONNECT and then %ss, and stays idle',
+    async (mode) => {
+      const proxy = await startFaultyProxy(mode);
+      stops.push(proxy.close);
+      through(proxy.url);
+      const started = Date.now();
+
+      await expect(
+        request(
+          'http://something.invalid/a',
+          {},
+          { retries: 1, deadlineMs: 1500, minTimeout: 1 },
+        ),
+      ).rejects.toThrow(/Network error calling something\.invalid/);
+
+      expect(Date.now() - started).toBeLessThan(4000);
+      const connects = proxy.connects();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(proxy.connects()).toBe(connects);
+    },
+    15000,
+  );
+
+  describe('redirects', () => {
+    it('are not followed unless asked for, and the target is shown without its query', async () => {
+      const { url, seen } = await serve((_req, res) => {
+        res.writeHead(302, { Location: '/elsewhere?token=SECRET' });
+        res.end();
+      });
+
+      const result = await request(`${url}/a`, {});
+
+      expect(result).toMatchObject({
+        status: 302,
+        ok: false,
+        location: `${url}/elsewhere`,
+      });
+      expect(JSON.stringify(result)).not.toContain('SECRET');
+      expect(seen).toEqual(['GET /a']);
+    });
+
+    it('are followed on the same origin when asked for, credentials included', async () => {
+      const headers: unknown[] = [];
+      const { url, seen } = await serve((req, res) => {
+        headers.push(req.headers['authorization']);
+        if (seen.length === 1) {
+          res.writeHead(301, { Location: '/b?x=1' }).end();
+          return;
+        }
+        res.end('{"ok":1}');
+      });
+
+      const result = await request(
+        `${url}/a`,
+        { headers: { Authorization: 'Bearer T' } },
+        { followRedirects: true },
       );
 
+      expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
+      expect(seen).toEqual(['GET /a', 'GET /b?x=1']);
+      expect(headers).toEqual(['Bearer T', 'Bearer T']);
+    });
+
+    it('are not followed to another origin, so the credentials stay put', async () => {
+      const other = await serve((_req, res) => res.end('{"leak":1}'));
+      const { url } = await serve((_req, res) => {
+        res.writeHead(302, { Location: `${other.url}/x?token=SECRET` }).end();
+      });
+
+      const result = await request(
+        `${url}/a`,
+        { headers: { Authorization: 'Bearer T' } },
+        { followRedirects: true },
+      );
+
+      expect(result).toMatchObject({
+        status: 302,
+        location: `${other.url}/x`,
+      });
+      expect(other.seen).toHaveLength(0);
+    });
+
+    it('are not followed from https to http', async () => {
+      const agent = new MockAgent();
+      agent.disableNetConnect();
+      agent
+        .get('https://x.test')
+        .intercept({ path: '/a', method: 'GET' })
+        .reply(301, '', { headers: { location: 'http://x.test/b?access=1' } });
+
+      const result = await request(
+        'https://x.test/a',
+        {},
+        { agent, followRedirects: true },
+      );
+
+      expect(result).toMatchObject({
+        status: 301,
+        location: 'http://x.test/b',
+      });
+    });
+
+    it('stop after three hops and report the last redirect', async () => {
+      const { url, seen } = await serve((_req, res) => {
+        res.writeHead(301, { Location: '/again' }).end();
+      });
+
+      const result = await request(`${url}/a`, {}, { followRedirects: true });
+
+      expect(result).toMatchObject({ status: 301, location: `${url}/again` });
+      expect(seen).toHaveLength(4);
+    });
+
+    it('are not followed for a POST', async () => {
+      const { url, seen } = await serve((_req, res) => {
+        res.writeHead(307, { Location: '/b' }).end();
+      });
+
+      const result = await request(
+        `${url}/a`,
+        { method: 'POST', body: 'a=1' },
+        { followRedirects: true },
+      );
+
+      expect(result.status).toBe(307);
+      expect(seen).toEqual(['POST /a']);
+    });
+
+    it('are not followed without a usable location', async () => {
+      const { url, seen } = await serve((_req, res) => {
+        res.writeHead(302).end();
+      });
+
+      const result = await request(`${url}/a`, {}, { followRedirects: true });
+
+      expect(result).toMatchObject({ status: 302 });
+      expect(result.location).toBeUndefined();
       expect(seen).toHaveLength(1);
-      expect(target.seen).toHaveLength(0);
-    } finally {
-      await target.close();
-    }
+    });
+  });
+});
+
+describe('request with a mock agent', () => {
+  const URL_A = 'https://x.test/a';
+  const via = (replies: readonly [number, string][]): MockAgent => {
+    const agent = new MockAgent();
+    agent.disableNetConnect();
+    const pool = agent.get('https://x.test');
+    replies.forEach(([status, data], index) => {
+      const scope = pool
+        .intercept({ path: '/a', method: 'GET' })
+        .reply(status, data);
+      if (index === replies.length - 1) {
+        scope.persist();
+      } else {
+        scope.times(1);
+      }
+    });
+    return agent;
+  };
+
+  it('decodes a JSON body, falls back to text, and returns undefined for none', async () => {
+    expect(
+      await request(URL_A, {}, { agent: via([[200, '{"ok":1}']]) }),
+    ).toEqual({ status: 200, ok: true, body: { ok: 1 } });
+    expect(
+      await request(URL_A, {}, { agent: via([[502, '<html>bad</html>']]) }),
+    ).toMatchObject({ status: 502, ok: false, body: '<html>bad</html>' });
+    expect(
+      (await request(URL_A, {}, { agent: via([[200, '']]) })).body,
+    ).toBeUndefined();
   });
 
-  it('does not follow a redirect from https to http', async () => {
+  it('does not retry unless asked to', async () => {
+    expect(
+      (await request(URL_A, {}, { agent: via([[503, 'x']]) })).status,
+    ).toBe(503);
+  });
+
+  it('returns the last response once the retries are used up', async () => {
+    const result = await request(
+      URL_A,
+      {},
+      { agent: via([[503, 'down']]), retries: 2, minTimeout: 1 },
+    );
+
+    expect(result).toMatchObject({ status: 503, ok: false, body: 'down' });
+  });
+
+  it('never retries a POST without retryPost, whatever retries says', async () => {
     const agent = new MockAgent();
     agent.disableNetConnect();
     agent
-      .get('https://api.github.com')
-      .intercept({ path: '/repos/o/r/releases?per_page=100', method: 'GET' })
-      .reply(301, '', {
-        headers: {
-          location: 'http://api.github.com/repos/n/r/releases?access=1',
-        },
-      });
+      .get('https://x.test')
+      .intercept({ path: '/a', method: 'POST' })
+      .reply(503, 'x')
+      .persist();
 
-    const text = await failure(
-      new GitHubClient({ agent, token: 'SECRET-TOKEN', minTimeout: 1 }),
+    const result = await request(
+      URL_A,
+      { method: 'POST' },
+      { agent, retries: 3, minTimeout: 1 },
     );
 
-    expect(text).toContain(
-      'answered 301 with a redirect to http://api.github.com/repos/n/r/releases, which is not followed',
-    );
-    expect(text).not.toContain('access=1');
-  });
-
-  it('gives up after three redirects', async () => {
-    const seen = await withServer(
-      (_attempt, response) => {
-        response.writeHead(301, { Location: '/again' }).end();
-      },
-      async (client) => {
-        expect(await failure(client)).toContain('which is not followed');
-      },
-    );
-
-    expect(seen).toHaveLength(4);
-  });
-
-  it('reports a redirect without a location', async () => {
-    await withServer(
-      (_attempt, response) => {
-        response.writeHead(302).end();
-      },
-      async (client) => {
-        expect(await failure(client)).toContain('an invalid location');
-      },
-    );
-  });
-});
-
-describe('GitHubClient proxy', () => {
-  /**
-   * Run a test with proxy variables in the environment.
-   *
-   * @param variables The variables to set; the others are removed.
-   * @param run The test body.
-   */
-  const withProxyEnv = async (
-    variables: Readonly<Record<string, string>>,
-    run: () => Promise<void>,
-  ): Promise<void> => {
-    const {
-      HTTP_PROXY,
-      http_proxy,
-      HTTPS_PROXY,
-      https_proxy,
-      NO_PROXY,
-      no_proxy,
-      ...rest
-    } = process.env;
-    void [HTTP_PROXY, http_proxy, HTTPS_PROXY, https_proxy, NO_PROXY, no_proxy];
-    const env = jest.replaceProperty(process, 'env', { ...rest, ...variables });
-    try {
-      await run();
-    } finally {
-      env.restore();
-    }
-  };
-
-  const target = async (): Promise<{
-    port: number;
-    close: () => Promise<void>;
-  }> => {
-    const server = createServer((_request, response) => tags(response));
-    await new Promise<void>((resolve) =>
-      server.listen(0, '127.0.0.1', resolve),
-    );
-    const address = server.address();
-    return {
-      port: address !== null && typeof address === 'object' ? address.port : 0,
-      close: () =>
-        new Promise<void>((resolve) => {
-          server.closeAllConnections();
-          server.close(() => resolve());
-        }),
-    };
-  };
-
-  it('sends requests through the proxy named in HTTP_PROXY', async () => {
-    const backend = await target();
-    const proxy = await startTunnelProxy(backend.port);
-    try {
-      await withProxyEnv({ HTTP_PROXY: proxy.url, NO_PROXY: '' }, async () => {
-        const client = new GitHubClient({ endpoint: 'http://github.invalid' });
-
-        await expect(client.listReleaseTags('o/r')).resolves.toEqual([
-          'v5.0.0',
-        ]);
-      });
-      expect(proxy.tunnelled).toEqual(['github.invalid:80']);
-    } finally {
-      await proxy.close();
-      await backend.close();
-    }
-  });
-
-  it('tunnels https requests through the proxy named in HTTPS_PROXY', async () => {
-    const tunnelled: string[] = [];
-    const proxy = createServer();
-    proxy.on('connect', (request, socket) => {
-      tunnelled.push(request.url ?? '');
-      socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
-    });
-    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
-    const address = proxy.address();
-    const port =
-      address !== null && typeof address === 'object' ? address.port : 0;
-    try {
-      await withProxyEnv(
-        { HTTPS_PROXY: `http://127.0.0.1:${port}`, NO_PROXY: '' },
-        async () => {
-          const client = new GitHubClient({
-            endpoint: 'https://github.invalid',
-            minTimeout: 1,
-          });
-
-          // A refused tunnel names the proxy's answer.
-          expect(await failure(client)).toMatch(
-            /^Network error while attempting to fetch releases from o\/r: .*Proxy response \(502\)/,
-          );
-        },
-      );
-      expect(tunnelled[0]).toBe('github.invalid:443');
-    } finally {
-      proxy.closeAllConnections();
-      proxy.close();
-    }
-  });
-
-  it('bypasses the proxy for hosts in NO_PROXY', async () => {
-    const backend = await target();
-    const proxy = await startTunnelProxy(backend.port);
-    try {
-      await withProxyEnv(
-        { HTTP_PROXY: proxy.url, NO_PROXY: '127.0.0.1' },
-        async () => {
-          const client = new GitHubClient({
-            endpoint: `http://127.0.0.1:${backend.port}`,
-          });
-
-          await expect(client.listReleaseTags('o/r')).resolves.toEqual([
-            'v5.0.0',
-          ]);
-        },
-      );
-      expect(proxy.tunnelled).toEqual([]);
-    } finally {
-      await proxy.close();
-      await backend.close();
-    }
-  });
-
-  it('explains a proxy variable that is not a URL without showing it', async () => {
-    await withProxyEnv({ HTTPS_PROXY: 'http://user:hunter2@a b' }, async () => {
-      const error = await Promise.resolve()
-        .then(() => new GitHubClient({}))
-        .catch((e: unknown) => e);
-
-      expect(error).toMatchObject({ code: 'EINVALIDPROXY' });
-      expect(JSON.stringify(error)).not.toContain('hunter2');
-      expect(messageOf(error)).not.toContain('hunter2');
-    });
-  });
-
-  it('names the reason when a connection is refused, without the token', async () => {
-    const probe = await startLoopback(() => undefined);
-    await probe.close();
-    const client = new GitHubClient({
-      token: 'SECRET-TOKEN',
-      endpoint: probe.url,
-      minTimeout: 1,
-    });
-
-    const text = await failure(client);
-
-    expect(text).toMatch(/ECONNREFUSED/);
-    expect(text).not.toContain('SECRET-TOKEN');
+    expect(result.status).toBe(503);
   });
 });

@@ -1,60 +1,96 @@
-import { createServer, type IncomingMessage, type Server } from 'node:http';
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http';
+import type { Duplex } from 'node:stream';
 
-interface Seen {
-  readonly method: string | undefined;
-  readonly url: string | undefined;
-  readonly headers: IncomingMessage['headers'];
-  readonly body: string;
-}
-
-export interface Loopback {
+export interface LoopbackServer {
   readonly url: string;
-  readonly seen: Seen[];
+  readonly port: number;
+  /** One entry per request: the method, the path and any `Range` header. */
+  readonly seen: string[];
   readonly close: () => Promise<void>;
 }
 
 /**
- * Start a real HTTP server on 127.0.0.1 that records every request and
- * answers through the given handler.
+ * Stop a server, dropping the connections it still holds.
  *
- * @param respond Called with the request number (from 1) and the raw response.
- * @returns The server's URL, the requests it saw and a way to stop it.
+ * @param server The server to stop.
+ * @returns Resolves once it has stopped.
  */
-export async function startLoopback(
-  respond: (
-    attempt: number,
-    response: import('node:http').ServerResponse,
-  ) => void,
-): Promise<Loopback> {
-  const seen: Seen[] = [];
-  const read = async (request: IncomingMessage): Promise<string> => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) {
-      chunks.push(Buffer.from(chunk));
-    }
-    return Buffer.concat(chunks).toString('utf8');
-  };
-  const server: Server = createServer((request, response) => {
-    void read(request).then((body) => {
-      seen.push({
-        method: request.method,
-        url: request.url,
-        headers: request.headers,
-        body,
-      });
-      respond(seen.length, response);
-    });
+function stop(server: Server): Promise<void> {
+  return new Promise<void>((resolve) => {
+    server.closeAllConnections();
+    server.close(() => resolve());
+  });
+}
+
+/**
+ * Start an HTTP server on a free loopback port.
+ *
+ * @param handler Answers each request.
+ * @returns Where it listens, what it has seen and a way to stop it.
+ */
+export async function listen(
+  handler: (request: IncomingMessage, response: ServerResponse) => void,
+): Promise<LoopbackServer> {
+  const seen: string[] = [];
+  const server = createServer((request, response) => {
+    seen.push(
+      `${request.method} ${request.url} ${request.headers.range ?? ''}`.trim(),
+    );
+    handler(request, response);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : 0;
   return {
-    url: `http://127.0.0.1:${port}/api/update-package`,
+    url: `http://127.0.0.1:${port}`,
+    port,
     seen,
-    close: () =>
-      new Promise<void>((resolve) => {
-        server.closeAllConnections();
-        server.close(() => resolve());
-      }),
+    close: () => stop(server),
+  };
+}
+
+export interface FaultyProxy {
+  readonly url: string;
+  /** How many times a client asked this proxy to open a tunnel. */
+  readonly connects: () => number;
+  readonly close: () => Promise<void>;
+}
+
+/**
+ * Start a proxy that accepts a `CONNECT` and then misbehaves.
+ *
+ * @param mode `reset` drops the connection at once; `stall` never answers.
+ * @returns The proxy's URL, a counter of the tunnels asked for and a way to
+ * stop it.
+ */
+export async function startFaultyProxy(
+  mode: 'reset' | 'stall',
+): Promise<FaultyProxy> {
+  const attempts: string[] = [];
+  const sockets: Duplex[] = [];
+  const server = createServer();
+  server.on('connect', (request, socket) => {
+    attempts.push(request.url ?? '');
+    sockets.push(socket);
+    socket.on('error', () => undefined);
+    if (mode === 'reset') {
+      socket.destroy();
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    connects: () => attempts.length,
+    close: () => {
+      sockets.forEach((socket) => socket.destroy());
+      return stop(server);
+    },
   };
 }

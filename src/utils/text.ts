@@ -1,10 +1,10 @@
 /**
- * Shorten foreign text before it goes into an error message or a log line.
+ * Shorten foreign text (a response body, a command's output) before it goes
+ * into an error message.
  *
  * @param text Text of any length.
  * @param max The most characters to keep.
- * @returns The text itself, or its first `max` characters followed by a
- * marker when it was longer.
+ * @returns The text, or its first `max` characters followed by a marker.
  */
 export function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}... (truncated)` : text;

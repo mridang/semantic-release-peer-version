@@ -115,7 +115,7 @@ is followed up to three times, but only when it stays on the same origin; a
 redirect to another host, or from https to http, ends the lookup with the
 error code `EREDIRECT`. The `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`
 environment variables are honoured; an invalid proxy URL fails with the error
-code `EINVALIDPROXY` (the value is not shown, as it may hold credentials).
+code `EPROXY` (the value is not shown, as it may hold credentials).
 
 ## Known Issues
 
