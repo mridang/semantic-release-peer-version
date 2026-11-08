@@ -1,5 +1,6 @@
 import SemanticReleaseError from '@semantic-release/error';
 import { EnvHttpProxyAgent, RetryAgent, fetch, type Dispatcher } from 'undici';
+import { assertRepo } from './plugin-config.js';
 import { messageOf } from './utils/error.js';
 import { isRecord, stringAt } from './utils/object.js';
 
@@ -231,10 +232,12 @@ export class GitHubClient {
    *
    * @param repo The repository, as `owner/repo`.
    * @returns The tag name of every release, drafts and pre-releases included.
-   * @throws {SemanticReleaseError} On a network failure, an HTTP error status,
+   * @throws {SemanticReleaseError} If `repo` is not `owner/name`, on a network failure, an HTTP error status,
    * or a response that is not a list of releases with a `tag_name` each.
    */
   async listReleaseTags(repo: string): Promise<readonly string[]> {
+    // Before anything is sent: the token must never go to a rewritten URL.
+    assertRepo(repo);
     const reply = await this.get(
       `${this.endpoint}/repos/${repo}/releases?per_page=100`,
       repo,

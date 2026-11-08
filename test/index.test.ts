@@ -116,6 +116,12 @@ describe('plugin steps with the GitHub client stubbed', () => {
       );
     });
 
+    it('refuses a repo that is not owner/name', async () => {
+      await expect(
+        verifyConditions({ repo: 'o/r?x=1' }, make().context),
+      ).rejects.toMatchObject({ code: 'EINVALIDREPO' });
+    });
+
     it('stores the major of the highest semver tag, ignoring other tags', async () => {
       const list = upstream(['v1.2.0', 'latest', 'v3.1.0', 'v2.0.0']);
       const { context, lines } = make();
@@ -149,6 +155,17 @@ describe('plugin steps with the GitHub client stubbed', () => {
   describe('analyzeCommits', () => {
     const make = (header: string, lastRelease: object = { version: '1.0.0' }) =>
       stepContext<AnalyzeContext>({ lastRelease, commits: [commit(header)] });
+
+    it('requires a valid repo even when no major bump is checked', async () => {
+      const { context } = make('chore: tidy');
+
+      await expect(analyzeCommits({ repo: '' }, context)).rejects.toThrow(
+        'Missing required config "repo".',
+      );
+      await expect(
+        analyzeCommits({ repo: 'o/r/../x' }, context),
+      ).rejects.toMatchObject({ code: 'EINVALIDREPO' });
+    });
 
     it('returns null without calling GitHub when there is nothing to release', async () => {
       const list = upstream(['v1.0.0']);

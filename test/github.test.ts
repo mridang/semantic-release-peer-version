@@ -120,6 +120,20 @@ describe('GitHubClient.listReleaseTags', () => {
   });
 });
 
+describe('GitHubClient repo check', () => {
+  it.each(['o/r?per_page=1', 'o/r/../../x', 'o'])(
+    'refuses %s without sending anything, so the token stays put',
+    async (repo) => {
+      const send = fakeFetch(200, []);
+
+      await expect(
+        new GitHubClient({ token: 'TOKEN', fetch: send }).listReleaseTags(repo),
+      ).rejects.toMatchObject({ code: 'EINVALIDREPO' });
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe('GitHubClient retries', () => {
   const retrying = (agent: MockAgent) =>
     new GitHubClient({ agent, minTimeout: 1 });

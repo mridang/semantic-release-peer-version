@@ -9,6 +9,7 @@ import type {
 } from 'semantic-release';
 import { GitHubClient } from './github.js';
 import {
+  assertRepo,
   customCommitAnalyzerConfig,
   type PluginConfig,
 } from './plugin-config.js';
@@ -65,9 +66,7 @@ export async function verifyConditions(
   config: PluginConfig,
   context: VerifyConditionsContext & CapContext,
 ): Promise<void> {
-  if (!config.repo) {
-    throw new SemanticReleaseError('Missing required config "repo".');
-  }
+  assertRepo(config.repo);
   context.logger.log(`Checking latest semver tag in ${config.repo}…`);
   const latestTag = await getLatestSemverTag(config);
   const cap = semver.major(latestTag);
@@ -120,6 +119,7 @@ export async function analyzeCommits(
   config: PluginConfig,
   context: AnalyzeCommitsContext,
 ): Promise<string | null> {
+  assertRepo(config.repo);
   const releaseType = await commitAnalyser(
     analyzerConfigOf(config, context.logger),
     context,
