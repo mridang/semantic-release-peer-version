@@ -13,17 +13,41 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe('Integration: block-major plugin hooks', () => {
+const token = process.env['GITHUB_TOKEN'];
+
+/**
+ * How many more requests GitHub will accept from this machine. The rate limit
+ * endpoint is not itself counted.
+ *
+ * @returns The remaining requests, or 0 when it cannot be read.
+ */
+const remainingRequests = async (): Promise<number> => {
+  const response = await fetch('https://api.github.com/rate_limit', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  }).catch(() => undefined);
+  const body: unknown = await response?.json().catch(() => undefined);
+  const resources = isRecord(body) ? body['resources'] : undefined;
+  const core = isRecord(resources) ? resources['core'] : undefined;
+  const remaining = isRecord(core) ? core['remaining'] : undefined;
+  return typeof remaining === 'number' ? remaining : 0;
+};
+
+// The real-API tests would only fail on a spent rate limit, so skip them then.
+const integration =
+  (await remainingRequests()) >= 10 ? describe : describe.skip;
+
+integration('Integration: block-major plugin hooks', () => {
   it('verifyConditions() reads the real latest semver tag', async () => {
     const { context } = stepContext<
       VerifyConditionsContext & { majorCapFromUpstream?: number }
     >();
 
-    await verifyConditions({ repo: 'cli/cli' }, context);
+    await verifyConditions({ repo: 'cli/cli', githubToken: token }, context);
     expect(typeof context.majorCapFromUpstream).toBe('number');
     expect(context.majorCapFromUpstream).toBeGreaterThanOrEqual(0);
     const res = await fetch(
       `https://api.github.com/repos/cli/cli/tags?per_page=1`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} },
     );
     const tags: unknown = await res.json();
     const name =
@@ -40,7 +64,9 @@ describe('Integration: block-major plugin hooks', () => {
       commits: [commit('feat!: this is breaking')],
     });
 
-    expect(await analyzeCommits({ repo: 'cli/cli' }, context)).toBe('major');
+    expect(
+      await analyzeCommits({ repo: 'cli/cli', githubToken: token }, context),
+    ).toBe('major');
   });
 
   it('analyzeCommits() blocks a major bump if cap is too low', async () => {
@@ -49,9 +75,9 @@ describe('Integration: block-major plugin hooks', () => {
       commits: [commit('feat!: another break')],
     });
 
-    await expect(analyzeCommits({ repo: 'cli/cli' }, context)).rejects.toThrow(
-      /Blocked: next major/,
-    );
+    await expect(
+      analyzeCommits({ repo: 'cli/cli', githubToken: token }, context),
+    ).rejects.toThrow(/Blocked: next major/);
   });
 
   it('analyzeCommits() passes through non-major bump', async () => {
@@ -60,7 +86,9 @@ describe('Integration: block-major plugin hooks', () => {
       commits: [commit('fix: update README')],
     });
 
-    expect(await analyzeCommits({ repo: 'cli/cli' }, context)).toBe('patch');
+    expect(
+      await analyzeCommits({ repo: 'cli/cli', githubToken: token }, context),
+    ).toBe('patch');
   });
 });
 
