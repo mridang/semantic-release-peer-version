@@ -16,7 +16,7 @@ export interface PluginConfig {
    * Optional configuration for the underlying commit analyzer. Defaults to
    * the `conventionalcommits` preset.
    */
-  readonly commitAnalyzerConfig?: Readonly<Record<string, unknown>>;
+  readonly commitAnalyzerConfig?: Readonly<Record<string, unknown>> | null;
 }
 
 /**
@@ -30,7 +30,7 @@ export function customCommitAnalyzerConfig(
   config: PluginConfig,
 ): Readonly<Record<string, unknown>> | undefined {
   const { commitAnalyzerConfig } = config;
-  return commitAnalyzerConfig !== undefined &&
+  return commitAnalyzerConfig != null &&
     Object.keys(commitAnalyzerConfig).length > 0
     ? commitAnalyzerConfig
     : undefined;

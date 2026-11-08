@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { createServer, type RequestListener } from 'node:http';
 import { MockAgent, Response } from 'undici';
 // noinspection ES6PreferShortImport
 import {
@@ -184,5 +185,73 @@ describe('GitHubClient retries', () => {
       /\(404 Not Found\)/,
     );
     agent.assertNoPendingInterceptors();
+  });
+});
+
+describe('GitHubClient against a local server', () => {
+  /**
+   * Run a test against a real HTTP server on the loopback interface, which
+   * keeps the response headers and sockets that a mock agent does not.
+   *
+   * @param listener Handles each request.
+   * @param run The test body, given a client pointed at the server.
+   */
+  const withServer = async (
+    listener: RequestListener,
+    run: (client: GitHubClient) => Promise<void>,
+  ): Promise<void> => {
+    const server = createServer(listener);
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
+    const address = server.address();
+    const port =
+      address !== null && typeof address === 'object' ? address.port : 0;
+    try {
+      await run(new GitHubClient({ baseUrl: `http://127.0.0.1:${port}` }));
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  };
+
+  it('waits for Retry-After before retrying a 503', async () => {
+    const handler = jest
+      .fn<RequestListener>()
+      .mockImplementationOnce((_request, response) => {
+        response.writeHead(503, { 'Retry-After': '1' }).end('busy');
+      })
+      .mockImplementation((_request, response) => {
+        response
+          .writeHead(200, { 'Content-Type': 'application/json' })
+          .end('[{"tag_name":"v4.0.0"}]');
+      });
+    const started = Date.now();
+
+    await withServer(handler, async (client) => {
+      await expect(client.listReleaseTags('o/r')).resolves.toEqual(['v4.0.0']);
+    });
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+  });
+
+  it('retries a connection that is reset', async () => {
+    const handler = jest
+      .fn<RequestListener>()
+      .mockImplementationOnce((request) => {
+        request.socket.destroy();
+      })
+      .mockImplementation((_request, response) => {
+        response
+          .writeHead(200, { 'Content-Type': 'application/json' })
+          .end('[]');
+      });
+
+    await withServer(handler, async (client) => {
+      await expect(client.listReleaseTags('o/r')).resolves.toEqual([]);
+    });
+
+    expect(handler).toHaveBeenCalledTimes(2);
   });
 });

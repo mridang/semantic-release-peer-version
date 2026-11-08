@@ -17,5 +17,8 @@ describe('customCommitAnalyzerConfig', () => {
     expect(
       customCommitAnalyzerConfig({ repo: 'o/r', commitAnalyzerConfig: {} }),
     ).toBeUndefined();
+    expect(
+      customCommitAnalyzerConfig({ repo: 'o/r', commitAnalyzerConfig: null }),
+    ).toBeUndefined();
   });
 });

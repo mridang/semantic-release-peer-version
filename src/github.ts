@@ -1,16 +1,23 @@
 import SemanticReleaseError from '@semantic-release/error';
-import {
-  RetryAgent,
-  fetch,
-  getGlobalDispatcher,
-  type Dispatcher,
-} from 'undici';
+import { Agent, RetryAgent, fetch, type Dispatcher } from 'undici';
 import { messageOf } from './utils/error.js';
 import { isRecord, stringAt } from './utils/object.js';
 
 const API_ROOT = 'https://api.github.com';
 
 const REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * The agent every client uses unless told otherwise. It comes from the
+ * installed `undici` package rather than the runtime's global dispatcher: on
+ * some Node versions the global one is the runtime's bundled undici, which
+ * `RetryAgent` cannot wrap.
+ */
+const defaultAgent = new Agent({
+  connect: { timeout: 10_000 },
+  headersTimeout: 30_000,
+  bodyTimeout: 30_000,
+});
 
 /**
  * Create the dispatcher the client uses by default. Every request made through
@@ -20,13 +27,10 @@ const REQUEST_TIMEOUT_MS = 60_000;
  * never waited on for longer than ten seconds. When the retries run out, the
  * last response is returned so that its status can be explained.
  *
- * @param base The dispatcher to wrap; undici's global one by default, so
- * proxy settings made for the process apply.
+ * @param base The dispatcher to wrap; tests pass their own.
  * @returns A dispatcher that retries idempotent requests.
  */
-export function createDispatcher(
-  base: Dispatcher = getGlobalDispatcher(),
-): Dispatcher {
+export function createDispatcher(base: Dispatcher = defaultAgent): Dispatcher {
   return new RetryAgent(base, {
     maxRetries: 3,
     minTimeout: 500,
@@ -133,6 +137,12 @@ export interface GitHubClientOptions {
   readonly dispatcher?: Dispatcher;
 
   /**
+   * The API root, `https://api.github.com` by default. Tests point it at a
+   * local server.
+   */
+  readonly baseUrl?: string;
+
+  /**
    * Upper bound, in milliseconds, for a whole call including its retries.
    */
   readonly timeoutMs?: number;
@@ -150,6 +160,8 @@ export class GitHubClient {
 
   private readonly timeoutMs: number;
 
+  private readonly baseUrl: string;
+
   /**
    * @param options Token, and the `fetch` and dispatcher to use.
    */
@@ -157,6 +169,7 @@ export class GitHubClient {
     this.token = options.token;
     this.send = options.fetch ?? fetch;
     this.dispatcher = options.dispatcher;
+    this.baseUrl = options.baseUrl ?? API_ROOT;
     this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
@@ -173,7 +186,7 @@ export class GitHubClient {
    */
   async listReleaseTags(repo: string): Promise<readonly string[]> {
     const response = await this.send(
-      `${API_ROOT}/repos/${repo}/releases?per_page=100`,
+      `${this.baseUrl}/repos/${repo}/releases?per_page=100`,
       {
         headers: {
           Accept: 'application/vnd.github+json',
