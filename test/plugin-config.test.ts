@@ -15,6 +15,12 @@ describe('customCommitAnalyzerConfig', () => {
     ).toEqual({ preset: 'angular' });
   });
 
+  it.each(['angular', ['a']])('hands %p to the analyzer as it is', (value) => {
+    expect(
+      customCommitAnalyzerConfig({ repo: 'o/r', commitAnalyzerConfig: value }),
+    ).toBe(value);
+  });
+
   it('is undefined when the option is missing or empty', () => {
     expect(customCommitAnalyzerConfig({ repo: 'o/r' })).toBeUndefined();
     expect(
@@ -24,7 +30,10 @@ describe('customCommitAnalyzerConfig', () => {
       customCommitAnalyzerConfig({ repo: 'o/r', commitAnalyzerConfig: null }),
     ).toBeUndefined();
     expect(
-      customCommitAnalyzerConfig({ repo: 'o/r', commitAnalyzerConfig: 'x' }),
+      customCommitAnalyzerConfig({ repo: 'o/r', commitAnalyzerConfig: '' }),
+    ).toBeUndefined();
+    expect(
+      customCommitAnalyzerConfig({ repo: 'o/r', commitAnalyzerConfig: [] }),
     ).toBeUndefined();
   });
 });

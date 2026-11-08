@@ -33,8 +33,13 @@ const remainingRequests = async (): Promise<number> => {
 };
 
 // The real-API tests would only fail on a spent rate limit, so skip them then.
-const integration =
-  (await remainingRequests()) >= 10 ? describe : describe.skip;
+const remaining = await remainingRequests();
+if (remaining < 10) {
+  console.warn(
+    `Skipping the real-API tests: GitHub allows only ${remaining} more requests (set GITHUB_TOKEN to raise the limit) or could not be reached.`,
+  );
+}
+const integration = remaining >= 10 ? describe : describe.skip;
 
 integration('Integration: block-major plugin hooks', () => {
   it('verifyConditions() reads the real latest semver tag', async () => {
@@ -225,6 +230,23 @@ describe('plugin steps with the GitHub client stubbed', () => {
       // The angular preset does not read `!` as a breaking change.
       const result = await analyzeCommits(
         { repo: 'o/r', commitAnalyzerConfig: { preset: 'angular' } },
+        context,
+      );
+
+      expect(result).toBeNull();
+      expect(list).not.toHaveBeenCalled();
+      expect(lines).toContain(
+        'Using provided commitAnalyzerConfig for base analyzer.',
+      );
+    });
+
+    it('passes a configuration that is not an object on, as before', async () => {
+      const list = upstream(['v9.0.0']);
+      const { context, lines } = make('feat!: brk');
+
+      // The analyzer ignores a string and uses its own angular default.
+      const result = await analyzeCommits(
+        { repo: 'o/r', commitAnalyzerConfig: 'angular' },
         context,
       );
 

@@ -10,7 +10,7 @@ declare module '@semantic-release/commit-analyzer' {
    * @returns The release type, or null when no release is warranted.
    */
   export function analyzeCommits(
-    pluginConfig: Readonly<Record<string, unknown>>,
+    pluginConfig: unknown,
     context: AnalyzeCommitsContext,
   ): Promise<string | null>;
 }
