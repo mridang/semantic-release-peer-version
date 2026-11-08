@@ -1,26 +1,31 @@
 import SemanticReleaseError from '@semantic-release/error';
-import { Agent, RetryAgent, fetch, type Dispatcher } from 'undici';
+import {
+  RetryAgent,
+  fetch,
+  getGlobalDispatcher,
+  type Dispatcher,
+} from 'undici';
 import { messageOf } from './utils/error.js';
 import { isRecord, stringAt } from './utils/object.js';
 
 const API_ROOT = 'https://api.github.com';
 
+const REQUEST_TIMEOUT_MS = 60_000;
+
 /**
  * Create the dispatcher the client uses by default. Every request made through
  * it is a GET, which is safe to repeat, so throttling (429), server errors
- * (500, 502, 503, 504) and dropped connections are retried with exponential
- * backoff, honouring `Retry-After`. Each attempt is bounded by connect, header
- * and body timeouts.
+ * (500, 502, 503, 504), dropped connections and connection or header timeouts
+ * are retried with exponential backoff. A `Retry-After` header is honoured but
+ * never waited on for longer than ten seconds. When the retries run out, the
+ * last response is returned so that its status can be explained.
  *
- * @param base The dispatcher to wrap; a plain agent with timeouts by default.
+ * @param base The dispatcher to wrap; undici's global one by default, so
+ * proxy settings made for the process apply.
  * @returns A dispatcher that retries idempotent requests.
  */
 export function createDispatcher(
-  base: Dispatcher = new Agent({
-    connect: { timeout: 10_000 },
-    headersTimeout: 30_000,
-    bodyTimeout: 30_000,
-  }),
+  base: Dispatcher = getGlobalDispatcher(),
 ): Dispatcher {
   return new RetryAgent(base, {
     maxRetries: 3,
@@ -28,6 +33,20 @@ export function createDispatcher(
     maxTimeout: 10_000,
     timeoutFactor: 2,
     methods: ['GET'],
+    throwOnError: false,
+    errorCodes: [
+      'ECONNRESET',
+      'ECONNREFUSED',
+      'ENOTFOUND',
+      'ENETDOWN',
+      'ENETUNREACH',
+      'EHOSTDOWN',
+      'EHOSTUNREACH',
+      'EPIPE',
+      'UND_ERR_SOCKET',
+      'UND_ERR_CONNECT_TIMEOUT',
+      'UND_ERR_HEADERS_TIMEOUT',
+    ],
   });
 }
 
@@ -81,6 +100,19 @@ function describeFailure(
 }
 
 /**
+ * Why a request failed. Undici reports every failure as "fetch failed" and
+ * keeps the real reason (a DNS error, a timeout) in the error's cause.
+ *
+ * @param error The error `fetch` rejected with.
+ * @returns Its message, followed by the message of its cause when it has one.
+ */
+function reasonOf(error: unknown): string {
+  return error instanceof Error && error.cause !== undefined
+    ? `${error.message} (${messageOf(error.cause)})`
+    : messageOf(error);
+}
+
+/**
  * Options for {@link GitHubClient}.
  */
 export interface GitHubClientOptions {
@@ -99,6 +131,11 @@ export interface GitHubClientOptions {
    * The dispatcher passed to `fetch`; {@link createDispatcher} by default.
    */
   readonly dispatcher?: Dispatcher;
+
+  /**
+   * Upper bound, in milliseconds, for a whole call including its retries.
+   */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -109,7 +146,9 @@ export class GitHubClient {
 
   private readonly send: typeof fetch;
 
-  private readonly dispatcher: Dispatcher;
+  private readonly dispatcher: Dispatcher | undefined;
+
+  private readonly timeoutMs: number;
 
   /**
    * @param options Token, and the `fetch` and dispatcher to use.
@@ -117,7 +156,8 @@ export class GitHubClient {
   constructor(options: GitHubClientOptions) {
     this.token = options.token;
     this.send = options.fetch ?? fetch;
-    this.dispatcher = options.dispatcher ?? createDispatcher();
+    this.dispatcher = options.dispatcher;
+    this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
   /**
@@ -140,11 +180,12 @@ export class GitHubClient {
           'X-GitHub-Api-Version': '2022-11-28',
           ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
         },
-        dispatcher: this.dispatcher,
+        dispatcher: this.dispatcher ?? createDispatcher(),
+        signal: AbortSignal.timeout(this.timeoutMs),
       },
     ).catch((error: unknown) => {
       throw new SemanticReleaseError(
-        `Network error while attempting to fetch releases from ${repo}: ${messageOf(error)}`,
+        `Network error while attempting to fetch releases from ${repo}: ${reasonOf(error)}`,
       );
     });
 

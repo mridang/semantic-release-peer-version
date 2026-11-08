@@ -8,7 +8,10 @@ import type {
   VerifyConditionsContext,
 } from 'semantic-release';
 import { GitHubClient } from './github.js';
-import { hasCommitAnalyzerConfig, type PluginConfig } from './plugin-config.js';
+import {
+  customCommitAnalyzerConfig,
+  type PluginConfig,
+} from './plugin-config.js';
 
 export type { PluginConfig } from './plugin-config.js';
 
@@ -68,8 +71,9 @@ export async function verifyConditions(
   context.logger.log(`Checking latest semver tag in ${config.repo}…`);
   const latestTag = await getLatestSemverTag(config);
   const cap = semver.major(latestTag);
-  // semantic-release hands later steps this same object, so the cap is shared
-  // by assigning it rather than by returning it.
+  // Kept from the original plugin. semantic-release gives every step its own
+  // copy of the context, so other steps do not see this value; `analyzeCommits`
+  // looks the cap up again.
   context.majorCapFromUpstream = cap;
   context.logger.log(`Latest tag is "${latestTag}" → major cap = ${cap}.`);
 }
@@ -86,9 +90,10 @@ function analyzerConfigOf(
   config: PluginConfig,
   logger: BaseContext['logger'],
 ): Readonly<Record<string, unknown>> {
-  if (hasCommitAnalyzerConfig(config.commitAnalyzerConfig)) {
+  const custom = customCommitAnalyzerConfig(config);
+  if (custom !== undefined) {
     logger.log('Using provided commitAnalyzerConfig for base analyzer.');
-    return config.commitAnalyzerConfig;
+    return custom;
   }
   logger.log(
     'No specific commitAnalyzerConfig provided, defaulting to { preset: "conventionalcommits" } for base analyzer.',

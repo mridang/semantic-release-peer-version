@@ -75,7 +75,7 @@ module.exports = {
       {
         repo: 'owner/repo',
         // Optional: GitHub token for private repos or to avoid rate limiting
-        // Defaults to process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+        // Not read from the environment: pass it explicitly
         // githubToken: process.env.UPSTREAM_GITHUB_TOKEN
       },
     ],

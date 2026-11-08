@@ -1,14 +1,21 @@
 import { describe, expect, it } from '@jest/globals';
 // noinspection ES6PreferShortImport
-import { hasCommitAnalyzerConfig } from '../src/plugin-config.js';
+import { customCommitAnalyzerConfig } from '../src/plugin-config.js';
 
-describe('hasCommitAnalyzerConfig', () => {
-  it('is true for a configuration with options', () => {
-    expect(hasCommitAnalyzerConfig({ preset: 'angular' })).toBe(true);
+describe('customCommitAnalyzerConfig', () => {
+  it('gives the configuration when it has options', () => {
+    expect(
+      customCommitAnalyzerConfig({
+        repo: 'o/r',
+        commitAnalyzerConfig: { preset: 'angular' },
+      }),
+    ).toEqual({ preset: 'angular' });
   });
 
-  it('is false when the option is missing or empty', () => {
-    expect(hasCommitAnalyzerConfig(undefined)).toBe(false);
-    expect(hasCommitAnalyzerConfig({})).toBe(false);
+  it('is undefined when the option is missing or empty', () => {
+    expect(customCommitAnalyzerConfig({ repo: 'o/r' })).toBeUndefined();
+    expect(
+      customCommitAnalyzerConfig({ repo: 'o/r', commitAnalyzerConfig: {} }),
+    ).toBeUndefined();
   });
 });

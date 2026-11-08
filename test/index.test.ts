@@ -9,7 +9,9 @@ import type { VerifyConditionsContext } from 'semantic-release';
 
 jest.setTimeout(30000);
 
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.restoreAllMocks();
+});
 
 describe('Integration: block-major plugin hooks', () => {
   it('verifyConditions() reads the real latest semver tag', async () => {

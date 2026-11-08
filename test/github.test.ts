@@ -56,6 +56,26 @@ describe('GitHubClient.listReleaseTags', () => {
     });
   });
 
+  it('bounds the whole call with a timeout', async () => {
+    const send = fakeFetch(200, []);
+
+    await new GitHubClient({ fetch: send }).listReleaseTags('o/r');
+
+    expect(send.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reports the cause of a network failure', async () => {
+    const send = jest.fn<Fetch>().mockRejectedValue(
+      new TypeError('fetch failed', {
+        cause: new Error('getaddrinfo ENOTFOUND api.github.com'),
+      }),
+    );
+
+    await expect(
+      new GitHubClient({ fetch: send }).listReleaseTags('o/r'),
+    ).rejects.toThrow('fetch failed (getaddrinfo ENOTFOUND api.github.com)');
+  });
+
   it('reports a network failure', async () => {
     const send = jest.fn<Fetch>().mockRejectedValue(new Error('offline'));
 
@@ -136,6 +156,20 @@ describe('GitHubClient retries', () => {
     pool.intercept({ path: PATH, method: 'GET' }).reply(200, []);
 
     await expect(retrying(agent).listReleaseTags('o/r')).resolves.toEqual([]);
+    agent.assertNoPendingInterceptors();
+  });
+
+  it('explains the status once the retries have run out', async () => {
+    const agent = mockAgent();
+    agent
+      .get('https://api.github.com')
+      .intercept({ path: PATH, method: 'GET' })
+      .reply(503, 'unavailable')
+      .times(4);
+
+    await expect(retrying(agent).listReleaseTags('o/r')).rejects.toThrow(
+      /^Failed to fetch releases from o\/r \(503 .*\)\. Please check repository URL/,
+    );
     agent.assertNoPendingInterceptors();
   });
 

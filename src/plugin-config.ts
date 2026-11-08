@@ -20,13 +20,18 @@ export interface PluginConfig {
 }
 
 /**
- * Whether the user gave the commit analyzer any configuration of its own.
+ * The commit analyzer configuration the user gave, if it has any options.
  *
- * @param config The `commitAnalyzerConfig` option.
- * @returns True when it is present and not empty.
+ * @param config The plugin configuration.
+ * @returns The `commitAnalyzerConfig` option, or undefined when it is missing
+ * or empty.
  */
-export function hasCommitAnalyzerConfig(
-  config: PluginConfig['commitAnalyzerConfig'],
-): config is Readonly<Record<string, unknown>> {
-  return config !== undefined && Object.keys(config).length > 0;
+export function customCommitAnalyzerConfig(
+  config: PluginConfig,
+): Readonly<Record<string, unknown>> | undefined {
+  const { commitAnalyzerConfig } = config;
+  return commitAnalyzerConfig !== undefined &&
+    Object.keys(commitAnalyzerConfig).length > 0
+    ? commitAnalyzerConfig
+    : undefined;
 }
