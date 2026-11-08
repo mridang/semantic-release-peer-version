@@ -38,6 +38,7 @@ describe('GitHubClient.listReleaseTags', () => {
     expect(send.mock.calls[0]?.[0]).toBe(`https://api.github.com${PATH}`);
     expect(send.mock.calls[0]?.[1]?.headers).toEqual({
       Accept: 'application/vnd.github+json',
+      'User-Agent': '@mridang/semantic-release-peer-version',
       'X-GitHub-Api-Version': '2022-11-28',
     });
   });
@@ -256,6 +257,42 @@ describe('GitHubClient against a local server', () => {
     });
 
     expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  const cutShort: RequestListener = (request, response) => {
+    response.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Content-Length': '100',
+    });
+    response.write('[{"tag_na');
+    setTimeout(() => request.socket.destroy(), 20);
+  };
+
+  const full: RequestListener = (_request, response) => {
+    response
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end('[{"tag_name":"v5.0.0"}]');
+  };
+
+  it('sends the whole request again when the connection drops during the body', async () => {
+    const handler = jest
+      .fn<RequestListener>()
+      .mockImplementationOnce(cutShort)
+      .mockImplementation(full);
+
+    await withServer(handler, async (client) => {
+      await expect(client.listReleaseTags('o/r')).resolves.toEqual(['v5.0.0']);
+    });
+
+    expect(handler.mock.lastCall?.[0].headers['range']).toBeUndefined();
+  });
+
+  it('reports a body that keeps failing as a network error', async () => {
+    await withServer(cutShort, async (client) => {
+      await expect(client.listReleaseTags('o/r')).rejects.toThrow(
+        /^Network error while attempting to fetch releases from o\/r: /,
+      );
+    });
   });
 
   it('sends requests through the proxy named in the environment', async () => {

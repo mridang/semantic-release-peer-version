@@ -6,6 +6,17 @@ import { isRecord, stringAt } from './utils/object.js';
 const API_ROOT = 'https://api.github.com';
 
 /**
+ * GitHub rejects requests that carry no user agent.
+ */
+const USER_AGENT = '@mridang/semantic-release-peer-version';
+
+/**
+ * How many times a request is sent again in full when the connection fails
+ * while its body is being read.
+ */
+const BODY_RESENDS = 2;
+
+/**
  * The longest a whole call may take, retries and back-off included.
  */
 const TOTAL_TIMEOUT_MS = 120000;
@@ -107,6 +118,30 @@ function describeFailure(
 }
 
 /**
+ * What GitHub answered, with the body already read.
+ */
+interface Reply {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly statusText: string;
+  readonly text: string;
+}
+
+/**
+ * Parse a response body.
+ *
+ * @param text The body.
+ * @returns The parsed JSON, or undefined when the body is not JSON.
+ */
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Why a request failed. Undici reports every failure as "fetch failed" and
  * keeps the real reason (a DNS error, a timeout) in the error's cause.
  *
@@ -198,40 +233,85 @@ export class GitHubClient {
    * or a response that is not a list of releases with a `tag_name` each.
    */
   async listReleaseTags(repo: string): Promise<readonly string[]> {
-    const response = await this.send(
+    const reply = await this.get(
       `${this.endpoint}/repos/${repo}/releases?per_page=100`,
-      {
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-        },
-        dispatcher: this.dispatcher,
-        signal: AbortSignal.timeout(this.timeoutMs),
-      },
-    ).catch((error: unknown) => {
-      throw new SemanticReleaseError(
-        `Network error while attempting to fetch releases from ${repo}: ${reasonOf(error)}`,
-      );
-    });
+      repo,
+      AbortSignal.timeout(this.timeoutMs),
+      BODY_RESENDS,
+    );
 
-    if (!response.ok) {
+    if (!reply.ok) {
       throw new SemanticReleaseError(
         describeFailure(
           repo,
-          response.status,
-          response.statusText,
+          reply.status,
+          reply.statusText,
           Boolean(this.token),
         ),
       );
     }
 
-    const tags = parseReleaseTags(await response.json().catch(() => undefined));
+    const tags = parseReleaseTags(parseJson(reply.text));
     if (tags === undefined) {
       throw new SemanticReleaseError(
         `Invalid response format received from GitHub API when fetching releases for ${repo}. Expected an array of objects with 'tag_name' strings.`,
       );
     }
     return tags;
+  }
+
+  /**
+   * Send a GET request and read the whole body. If the connection fails after
+   * the headers have arrived, undici would resume the body with a `Range`
+   * request, which GitHub ignores, so the failure reaches this method and the
+   * request is sent again in full instead.
+   *
+   * @param url The URL to fetch.
+   * @param repo The repository, for error messages.
+   * @param signal Aborts the call, retries included, at its deadline.
+   * @param resends How many more times the request may be sent again after a
+   * failure while reading the body.
+   * @returns The status and the body text.
+   * @throws {SemanticReleaseError} If the network keeps failing.
+   */
+  private async get(
+    url: string,
+    repo: string,
+    signal: AbortSignal,
+    resends: number,
+  ): Promise<Reply> {
+    const failed = (error: unknown): SemanticReleaseError =>
+      new SemanticReleaseError(
+        `Network error while attempting to fetch releases from ${repo}: ${reasonOf(error)}`,
+      );
+    const response = await this.send(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': USER_AGENT,
+        'X-GitHub-Api-Version': '2022-11-28',
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      },
+      dispatcher: this.dispatcher,
+      signal,
+    }).catch((error: unknown): never => {
+      throw failed(error);
+    });
+    // Always read the body, so that the connection is released.
+    const text = await response.text().then(
+      (body) => ({ body }),
+      (error: unknown) => ({ error }),
+    );
+    if ('error' in text) {
+      if (resends > 0 && !signal.aborted) {
+        return this.get(url, repo, signal, resends - 1);
+      }
+      throw failed(text.error);
+    }
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      text: text.body,
+    };
   }
 }
