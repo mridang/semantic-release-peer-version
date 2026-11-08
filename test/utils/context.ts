@@ -38,6 +38,4 @@ export const commit = (header: string): Readonly<Record<string, unknown>> => ({
   message: header,
 });
 
-export type AnalyzeContext = AnalyzeCommitsContext & {
-  majorCapFromUpstream?: number;
-};
+export type AnalyzeContext = AnalyzeCommitsContext;

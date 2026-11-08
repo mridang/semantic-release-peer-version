@@ -38,13 +38,9 @@ const integration =
 
 integration('Integration: block-major plugin hooks', () => {
   it('verifyConditions() reads the real latest semver tag', async () => {
-    const { context } = stepContext<
-      VerifyConditionsContext & { majorCapFromUpstream?: number }
-    >();
+    const { context, lines } = stepContext<VerifyConditionsContext>();
 
     await verifyConditions({ repo: 'cli/cli', githubToken: token }, context);
-    expect(typeof context.majorCapFromUpstream).toBe('number');
-    expect(context.majorCapFromUpstream).toBeGreaterThanOrEqual(0);
     const res = await fetch(
       `https://api.github.com/repos/cli/cli/tags?per_page=1`,
       { headers: token ? { Authorization: `Bearer ${token}` } : {} },
@@ -55,7 +51,9 @@ integration('Integration: block-major plugin hooks', () => {
         ? stringAt(tags[0], 'name')
         : undefined;
     expect(name).toBeDefined();
-    expect(context.majorCapFromUpstream).toBe(semver.major(name ?? ''));
+    expect(lines.join('\n')).toContain(
+      `major cap = ${semver.major(name ?? '')}.`,
+    );
   });
 
   it('analyzeCommits() yields "major" for a breaking change when under cap', async () => {
@@ -103,10 +101,7 @@ describe('plugin steps with the GitHub client stubbed', () => {
   });
 
   describe('verifyConditions', () => {
-    const make = () =>
-      stepContext<
-        VerifyConditionsContext & { majorCapFromUpstream?: number }
-      >();
+    const make = () => stepContext<VerifyConditionsContext>();
 
     it('requires a repo', async () => {
       const { context } = make();
@@ -122,13 +117,12 @@ describe('plugin steps with the GitHub client stubbed', () => {
       ).rejects.toMatchObject({ code: 'EINVALIDREPO' });
     });
 
-    it('stores the major of the highest semver tag, ignoring other tags', async () => {
+    it('takes the major of the highest semver tag, ignoring other tags', async () => {
       const list = upstream(['v1.2.0', 'latest', 'v3.1.0', 'v2.0.0']);
       const { context, lines } = make();
 
       await verifyConditions({ repo: 'o/r', githubToken: 'T' }, context);
 
-      expect(context.majorCapFromUpstream).toBe(3);
       expect(list).toHaveBeenCalledWith('o/r');
       expect(lines).toContain('Latest tag is "v3.1.0" → major cap = 3.');
     });
@@ -140,7 +134,6 @@ describe('plugin steps with the GitHub client stubbed', () => {
       await expect(verifyConditions({ repo: 'o/r' }, context)).rejects.toThrow(
         'No valid semver release tags found among the latest 100 releases for o/r. Unable to determine the latest version.',
       );
-      expect(context.majorCapFromUpstream).toBeUndefined();
     });
 
     it('fails when there are no releases at all', async () => {
@@ -225,31 +218,40 @@ describe('plugin steps with the GitHub client stubbed', () => {
       );
     });
 
-    it('uses the commit analyzer configuration it is given', async () => {
-      const { context, lines } = make('fix: a bug');
+    it('analyses with the commit analyzer configuration it is given', async () => {
+      const list = upstream(['v9.0.0']);
+      const { context, lines } = make('feat!: brk');
 
+      // The angular preset does not read `!` as a breaking change.
       const result = await analyzeCommits(
-        {
-          repo: 'o/r',
-          commitAnalyzerConfig: { preset: 'angular' },
-        },
+        { repo: 'o/r', commitAnalyzerConfig: { preset: 'angular' } },
         context,
       );
 
-      expect(result).toBe('patch');
+      expect(result).toBeNull();
+      expect(list).not.toHaveBeenCalled();
       expect(lines).toContain(
         'Using provided commitAnalyzerConfig for base analyzer.',
       );
     });
 
-    it('defaults to the conventionalcommits preset', async () => {
-      const { context, lines } = make('fix: a bug');
+    it.each([undefined, {}, null])(
+      'defaults to the conventionalcommits preset for %p',
+      async (commitAnalyzerConfig) => {
+        upstream(['v9.0.0']);
+        const { context, lines } = make('feat!: brk');
 
-      await analyzeCommits({ repo: 'o/r', commitAnalyzerConfig: {} }, context);
+        // The conventionalcommits preset reads `!` as a breaking change.
+        const result = await analyzeCommits(
+          { repo: 'o/r', commitAnalyzerConfig },
+          context,
+        );
 
-      expect(lines[0]).toMatch(
-        /defaulting to \{ preset: "conventionalcommits" \}/,
-      );
-    });
+        expect(result).toBe('major');
+        expect(lines[0]).toMatch(
+          /defaulting to \{ preset: "conventionalcommits" \}/,
+        );
+      },
+    );
   });
 });

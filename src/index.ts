@@ -19,12 +19,6 @@ export type { PluginConfig } from './plugin-config.js';
 const require = createRequire(import.meta.url);
 
 /**
- * The context of the steps of this plugin. `majorCapFromUpstream` is written
- * by `verifyConditions` so that later steps of the same run can read it.
- */
-type CapContext = { majorCapFromUpstream?: number };
-
-/**
  * Fetches up to the last 100 releases of the repository and returns the tag
  * of the highest semantic version among them (for example "v1.2.3" or
  * "1.3.0-beta.1"). Tags that are not valid semver are ignored.
@@ -52,28 +46,25 @@ async function getLatestSemverTag(config: PluginConfig): Promise<string> {
 
 /**
  * semantic-release `verifyConditions` step. Finds the latest semantic version
- * tag in the upstream repository `config.repo` and stores its major version as
- * `context.majorCapFromUpstream`, so other steps of the same run can read it.
+ * tag in the upstream repository `config.repo`, so that a release fails early
+ * when GitHub cannot be reached or the repository has no semver release. Its
+ * major version is the cap that `analyzeCommits` enforces.
  * The `githubToken` is only needed for private repositories or to avoid rate
  * limits.
  *
  * @param config The plugin configuration.
- * @param context The semantic-release context, which is given the cap.
+ * @param context The semantic-release context.
  * @throws {SemanticReleaseError} If `repo` is not configured, or the latest
  * tag cannot be determined.
  */
 export async function verifyConditions(
   config: PluginConfig,
-  context: VerifyConditionsContext & CapContext,
+  context: VerifyConditionsContext,
 ): Promise<void> {
   assertRepo(config.repo);
   context.logger.log(`Checking latest semver tag in ${config.repo}…`);
   const latestTag = await getLatestSemverTag(config);
   const cap = semver.major(latestTag);
-  // Kept from the original plugin. semantic-release gives every step its own
-  // copy of the context, so other steps do not see this value; `analyzeCommits`
-  // looks the cap up again.
-  context.majorCapFromUpstream = cap;
   context.logger.log(`Latest tag is "${latestTag}" → major cap = ${cap}.`);
 }
 

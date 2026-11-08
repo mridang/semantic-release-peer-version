@@ -1,4 +1,5 @@
 import SemanticReleaseError from '@semantic-release/error';
+import { isRecord } from './utils/object.js';
 
 /**
  * Plugin configuration, as given in the semantic-release config.
@@ -18,7 +19,7 @@ export interface PluginConfig {
    * Optional configuration for the underlying commit analyzer. Defaults to
    * the `conventionalcommits` preset.
    */
-  readonly commitAnalyzerConfig?: Readonly<Record<string, unknown>> | null;
+  readonly commitAnalyzerConfig?: unknown;
 }
 
 /**
@@ -32,7 +33,7 @@ export function customCommitAnalyzerConfig(
   config: PluginConfig,
 ): Readonly<Record<string, unknown>> | undefined {
   const { commitAnalyzerConfig } = config;
-  return commitAnalyzerConfig != null &&
+  return isRecord(commitAnalyzerConfig) &&
     Object.keys(commitAnalyzerConfig).length > 0
     ? commitAnalyzerConfig
     : undefined;
