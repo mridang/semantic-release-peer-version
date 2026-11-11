@@ -7,7 +7,7 @@ import { GitHubClient } from '../src/github.js';
 import { commit, stepContext, type AnalyzeContext } from './utils/context.js';
 import type { VerifyConditionsContext } from 'semantic-release';
 
-jest.setTimeout(30000);
+jest.setTimeout(30_000);
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -18,7 +18,6 @@ const token = process.env['GITHUB_TOKEN'];
 /**
  * How many more requests GitHub will accept from this machine. The rate limit
  * endpoint is not itself counted.
- *
  * @returns The remaining requests, or 0 when it cannot be read.
  */
 const remainingRequests = async (): Promise<number> => {

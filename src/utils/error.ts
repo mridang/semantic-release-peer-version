@@ -8,8 +8,7 @@ import { isRecord, stringAt } from './object.js';
  *
  * Errors are recognised by shape rather than by `instanceof`, because errors
  * raised by Node itself can come from another realm (a test sandbox, for one).
- *
- * @param error A caught value, which is not necessarily an `Error`.
+ * @param error - A caught value, which is not necessarily an `Error`.
  * @returns Its message, or its string form when it is not an `Error`.
  */
 export function messageOf(error: unknown): string {
@@ -28,8 +27,7 @@ export function messageOf(error: unknown): string {
 
 /**
  * The `code` of anything that was thrown, such as a `SemanticReleaseError`.
- *
- * @param error A caught value.
+ * @param error - A caught value.
  * @returns Its string `code`, or undefined when it has none.
  */
 export function codeOf(error: unknown): string | undefined {

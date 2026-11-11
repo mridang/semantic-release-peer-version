@@ -26,8 +26,7 @@ export interface PluginConfig {
  * before, any value with keys is handed to the analyzer as it is, which then
  * decides what to make of a string or an array; only a missing, empty or
  * falsy value means the default.
- *
- * @param config The plugin configuration.
+ * @param config - The plugin configuration.
  * @returns The `commitAnalyzerConfig` option, or undefined when it is missing
  * or empty.
  */
@@ -47,8 +46,7 @@ const REPO_PATTERN = /^(?!\.+\/)[\w.-]+\/(?!\.+$)[\w.-]+$/;
 
 /**
  * Check the `repo` option before it is put into a URL path.
- *
- * @param repo The `repo` option.
+ * @param repo - The `repo` option.
  * @throws {SemanticReleaseError} If it is missing, or is not `owner/name`.
  */
 export function assertRepo(repo: unknown): asserts repo is string {

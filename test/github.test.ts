@@ -18,8 +18,7 @@ interface Reply {
 /**
  * A mock agent that answers the releases request with the given replies in
  * order, the last one repeating. Nothing else is reachable.
- *
- * @param replies What to answer with.
+ * @param replies - What to answer with.
  * @returns The agent, and the headers of each request it received.
  */
 const mockReleases = (
@@ -96,7 +95,9 @@ describe('GitHubClient.listReleaseTags', () => {
     const text = await failure(new GitHubClient({ token, agent }));
 
     expect(text).toMatch(
-      new RegExp(`^Failed to fetch releases from o/r \\(${status}\\)\\. `),
+      new RegExp(
+        String.raw`^Failed to fetch releases from o/r \(${status}\)\. `,
+      ),
     );
     expect(text).toMatch(message);
   });
@@ -120,7 +121,7 @@ describe('GitHubClient.listReleaseTags', () => {
     expect(texts[0]?.text).toMatch(/throttling.*Providing a GitHub token/);
     expect(texts[1]?.text).toMatch(/throttling.*Try again later/);
     expect(texts[2]?.text).toMatch(/Please check repository URL/);
-  }, 20000);
+  }, 20_000);
 
   it.each([
     ['an object', { tag_name: 'v1.0.0' }],
@@ -243,7 +244,7 @@ describe('GitHubClient failure messages', () => {
 
     const error = await new GitHubClient({ token: 'T', agent })
       .listReleaseTags('o/r')
-      .catch((e: unknown) => e);
+      .catch((error_: unknown) => error_);
 
     expect(error).toMatchObject({ code: 'EREDIRECT' });
     expect(messageOf(error)).toContain(
@@ -258,7 +259,7 @@ describe('GitHubClient failure messages', () => {
     try {
       const error = await new GitHubClient({})
         .listReleaseTags('o/r')
-        .catch((e: unknown) => e);
+        .catch((error_: unknown) => error_);
 
       expect(error).toMatchObject({ code: 'EPROXY' });
       const shown = [
@@ -398,7 +399,7 @@ describe('request over a real socket', () => {
 
     expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
     expect(seen).toHaveLength(2);
-  }, 15000);
+  }, 15_000);
 
   it('gives up with one request per attempt when every attempt stalls', async () => {
     const { url, seen } = await serve(() => undefined);
@@ -411,7 +412,7 @@ describe('request over a real socket', () => {
       ),
     ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
     expect(seen).toHaveLength(2);
-  }, 15000);
+  }, 15_000);
 
   it('stops at the deadline', async () => {
     const { url } = await serve(() => undefined);
@@ -421,7 +422,7 @@ describe('request over a real socket', () => {
       /aborted due to timeout/,
     );
     expect(Date.now() - started).toBeLessThan(2000);
-  }, 15000);
+  }, 15_000);
 
   it('sends exactly retries + 1 whole requests when the body is always cut short', async () => {
     const { url, seen } = await serve((_req, res) => {
@@ -434,7 +435,7 @@ describe('request over a real socket', () => {
       request(`${url}/a`, {}, { retries: 2, minTimeout: 1 }),
     ).rejects.toThrow(/other side closed/);
     expect(seen).toEqual(['GET /a', 'GET /a', 'GET /a']);
-  }, 15000);
+  }, 15_000);
 
   it('sends the whole request again, never a Range resume, when the body is cut once', async () => {
     const { url, seen } = await serve((_req, res) => {
@@ -473,7 +474,7 @@ describe('request over a real socket', () => {
       `http://localhost:${server.port}/a?token=SECRET`,
       { headers: { Authorization: 'Bearer SECRET' } },
       fast,
-    ).catch((e: unknown) => e);
+    ).catch((error_: unknown) => error_);
 
     expect(String(error)).toContain('ECONNREFUSED');
     expect(String(error)).not.toContain('SECRET');
@@ -524,7 +525,7 @@ describe('request over a real socket', () => {
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(proxy.connects()).toBe(connects);
     },
-    15000,
+    15_000,
   );
 
   describe('redirects', () => {

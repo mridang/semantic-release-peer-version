@@ -21,6 +21,7 @@ export interface HttpResult {
   readonly ok: boolean;
   /** The body: parsed JSON, else the first 500 characters of the text. */
   readonly body: unknown;
+
   /**
    * Where a redirect points, without its query string, which can hold a
    * secret. Only set for a redirect that was not followed.
@@ -39,21 +40,21 @@ const USER_AGENT = 'semantic-release-peer-version';
  * The longest a whole call may take, retries and back-off included, unless
  * the call says otherwise.
  */
-const DEADLINE_MS = 120000;
+const DEADLINE_MS = 120_000;
 
 /**
  * The longest a single attempt may wait for the response headers or the body,
  * unless the call says otherwise. An attempt that stalls is abandoned and
  * retried.
  */
-const ATTEMPT_TIMEOUT_MS = 30000;
+const ATTEMPT_TIMEOUT_MS = 30_000;
 
 /**
  * The longest wait between two attempts, which also caps a `Retry-After`
  * header. It is never more than a quarter of the deadline. A wait in progress
  * when the deadline passes is cancelled.
  */
-const MAX_BACKOFF_MS = 15000;
+const MAX_BACKOFF_MS = 15_000;
 
 /**
  * Methods that are safe to repeat. A POST is only retried when the call says
@@ -64,7 +65,7 @@ const IDEMPOTENT_METHODS = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'];
 /**
  * The statuses that are worth another attempt: throttling and server errors.
  */
-const RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 /**
  * How many redirects are followed when the call asks for it.
@@ -72,7 +73,7 @@ const RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
 const MAX_REDIRECTIONS = 3;
 
 /**
- * The most of a response body that is read. undici stops a larger body, which
+ * The most of a response body that is read. Undici stops a larger body, which
  * is then reported as a failure and not repeated.
  */
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
@@ -81,7 +82,7 @@ const MAX_BODY_BYTES = 32 * 1024 * 1024;
  * Failures worth another attempt. Naming them replaces undici's own list, so
  * it is repeated here with the resolver and timeout codes added.
  */
-const RETRYABLE_ERROR_CODES = [
+const RETRYABLE_ERROR_CODES = new Set([
   'ECONNRESET',
   'ECONNREFUSED',
   'ENOTFOUND',
@@ -96,7 +97,7 @@ const RETRYABLE_ERROR_CODES = [
   'UND_ERR_CONNECT_TIMEOUT',
   'UND_ERR_HEADERS_TIMEOUT',
   'UND_ERR_BODY_TIMEOUT',
-];
+]);
 
 /**
  * The code of the error that stands for a connection lost after the response
@@ -105,7 +106,7 @@ const RETRYABLE_ERROR_CODES = [
 const BODY_PHASE_CODE = 'UND_ERR_BODY_PHASE';
 
 /**
- * A connection that failed while the response body was being read. undici
+ * A connection that failed while the response body was being read. Undici
  * would resume such a response with a `Range` request, which these APIs
  * ignore; this error is not retried by the retrying agent, so that the whole
  * request is sent again instead.
@@ -114,7 +115,7 @@ class BodyPhaseError extends Error {
   readonly code = BODY_PHASE_CODE;
 
   /**
-   * @param cause The error that undici reported.
+   * @param cause - The error that undici reported.
    */
   constructor(cause: unknown) {
     super('the connection was lost while reading the response', { cause });
@@ -126,8 +127,7 @@ class BodyPhaseError extends Error {
  * bundled undici cannot be wrapped by `RetryAgent`). They honour the
  * `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` environment variables, which are
  * read when this is called.
- *
- * @param attemptTimeoutMs How long one attempt may wait for the response.
+ * @param attemptTimeoutMs - How long one attempt may wait for the response.
  * @returns A dispatcher with connection and response timeouts and a cap on
  * the size of a response.
  * @throws {SemanticReleaseError} If a proxy variable is not a valid proxy.
@@ -137,7 +137,7 @@ class BodyPhaseError extends Error {
 function connections(attemptTimeoutMs: number): Dispatcher {
   try {
     return new EnvHttpProxyAgent({
-      connect: { timeout: 10000 },
+      connect: { timeout: 10_000 },
       headersTimeout: attemptTimeoutMs,
       bodyTimeout: attemptTimeoutMs,
       maxResponseSize: MAX_BODY_BYTES,
@@ -159,9 +159,8 @@ function connections(attemptTimeoutMs: number): Dispatcher {
 /**
  * Describe a failed request that got no response. The message names the host
  * and the reason, and never the URL, which can hold a secret.
- *
- * @param error A caught value.
- * @param host The host that was called.
+ * @param error - A caught value.
+ * @param host - The host that was called.
  * @returns An error with the reason in its message.
  */
 function networkErrorFor(error: unknown, host: string): Error {
@@ -175,8 +174,7 @@ function networkErrorFor(error: unknown, host: string): Error {
 /**
  * Mark a connection that fails after the response headers arrived, so that
  * the retrying agent leaves it alone (see {@link BodyPhaseError}).
- *
- * @param dispatch The dispatch function to wrap.
+ * @param dispatch - The dispatch function to wrap.
  * @returns A dispatch function that wraps the handler.
  */
 function markBodyFailures(
@@ -201,7 +199,7 @@ function markBodyFailures(
         handler.onResponseError?.(
           controller,
           started.signal.aborted &&
-            RETRYABLE_ERROR_CODES.includes(codeOf(error) ?? '')
+            RETRYABLE_ERROR_CODES.has(codeOf(error) ?? '')
             ? new BodyPhaseError(error)
             : error,
         ),
@@ -211,8 +209,7 @@ function markBodyFailures(
 
 /**
  * Decode a response body.
- *
- * @param text The body as text.
+ * @param text - The body as text.
  * @returns The parsed JSON, undefined for an empty body, else the first 500
  * characters of the text.
  */
@@ -230,9 +227,8 @@ function decodeBody(text: string): unknown {
 /**
  * Where a redirect points, without the query (which can hold a secret), the
  * fragment or any user info.
- *
- * @param location The `Location` header.
- * @param base The URL that was called, for a relative `Location`.
+ * @param location - The `Location` header.
+ * @param base - The URL that was called, for a relative `Location`.
  * @returns A URL that is safe to show, or undefined without a usable header.
  */
 function placeOf(location: unknown, base: URL): string | undefined {
@@ -247,11 +243,10 @@ function placeOf(location: unknown, base: URL): string | undefined {
  * Where a redirect may be followed to. Only a GET or HEAD request is
  * followed, and only to the same origin, which rules out a change from https
  * to http and keeps the credentials from leaving for another host.
- *
- * @param from The URL that was called.
- * @param method The method of the request.
- * @param status The status of the response.
- * @param location The `Location` header.
+ * @param from - The URL that was called.
+ * @param method - The method of the request.
+ * @param status - The status of the response.
+ * @param location - The `Location` header.
  * @returns The URL to call next, or undefined when the redirect is not to be
  * followed.
  */
@@ -275,12 +270,11 @@ function sameOriginRedirect(
 
 /**
  * Whether a failed attempt is worth another one.
- *
- * @param error The error undici reports for the failed attempt.
- * @param method The method of the request.
- * @param methods The methods that may be repeated.
- * @param attempt Which retry this would be, starting at 1.
- * @param retries How many retries are allowed.
+ * @param error - The error undici reports for the failed attempt.
+ * @param method - The method of the request.
+ * @param methods - The methods that may be repeated.
+ * @param attempt - Which retry this would be, starting at 1.
+ * @param retries - How many retries are allowed.
  * @returns True to try again.
  */
 function isRetryable(
@@ -297,22 +291,21 @@ function isRetryable(
   if (
     code !== undefined &&
     code !== 'UND_ERR_REQ_RETRY' &&
-    !RETRYABLE_ERROR_CODES.includes(code)
+    !RETRYABLE_ERROR_CODES.has(code)
   ) {
     return false;
   }
   const status = isRecord(error) ? numberAt(error, 'statusCode') : undefined;
-  return status === undefined || RETRYABLE_STATUSES.includes(status);
+  return status === undefined || RETRYABLE_STATUSES.has(status);
 }
 
 /**
  * How long to wait before the next attempt: what `Retry-After` asks for, else
  * exponential back-off, never more than `capMs`.
- *
- * @param error The error undici reports for the failed attempt.
- * @param attempt Which retry this is, starting at 1.
- * @param minTimeoutMs The first back-off.
- * @param capMs The longest wait.
+ * @param error - The error undici reports for the failed attempt.
+ * @param attempt - Which retry this is, starting at 1.
+ * @param minTimeoutMs - The first back-off.
+ * @param capMs - The longest wait.
  * @returns The wait in milliseconds.
  */
 function waitBeforeRetry(
@@ -365,12 +358,14 @@ export interface RequestOptions {
   readonly retries?: number;
   /** The first back-off in milliseconds, doubled for each retry. */
   readonly minTimeout?: number;
+
   /**
    * Allow a POST to be retried. Only for a POST that is safe to repeat, such
    * as the token exchange; an upload or a publish never sets it, and without
    * it a POST gets no retries whatever `retries` says.
    */
   readonly retryPost?: boolean;
+
   /**
    * Follow the redirects of a GET or HEAD request, up to three, but only to
    * the same origin. Off by default. A redirect that is not followed is
@@ -395,12 +390,11 @@ export interface RequestOptions {
  * attempt is cancelled and the connections this call created are destroyed,
  * which also stops a proxy tunnel that is still being set up.
  *
- * undici's `request` is used rather than `fetch` because `fetch` turns a body
- * into a one-shot stream, which undici cannot send a second time.
- *
- * @param url Absolute URL to call.
- * @param init Method, headers and body.
- * @param options Timeouts, retries and, for tests, the connections.
+ * Undici's `request` is used rather than `fetch` because `fetch` turns a body
+ * into a one-shot stream, which undici cannot send a second time..
+ * @param url - Absolute URL to call.
+ * @param init - Method, headers and body.
+ * @param options - Timeouts, retries and, for tests, the connections.
  * @returns The status and decoded body.
  * @throws If the network call fails after the allowed attempts. The message
  * names the host and never contains the URL, headers or body.
@@ -544,8 +538,7 @@ const MAX_DETAIL_CHARS = 2000;
 
 /**
  * Read the tag names out of an untrusted releases response.
- *
- * @param payload Parsed JSON from the releases endpoint.
+ * @param payload - Parsed JSON from the releases endpoint.
  * @returns The tag name of every release, or undefined when the payload is not
  * an array of objects that all have a string `tag_name`.
  */
@@ -563,10 +556,9 @@ function parseReleaseTags(payload: unknown): readonly string[] | undefined {
 
 /**
  * Why a failed releases request failed, in words for the person releasing.
- *
- * @param status The HTTP status.
- * @param rateLimited Whether GitHub said that a rate limit was exceeded.
- * @param hasToken Whether the request was authenticated.
+ * @param status - The HTTP status.
+ * @param rateLimited - Whether GitHub said that a rate limit was exceeded.
+ * @param hasToken - Whether the request was authenticated.
  * @returns The explanation.
  */
 function reasonFor(
@@ -598,10 +590,9 @@ function reasonFor(
 
 /**
  * The error that describes a failed releases request.
- *
- * @param repo The repository, as `owner/repo`.
- * @param result The failed response.
- * @param hasToken Whether the request was authenticated.
+ * @param repo - The repository, as `owner/repo`.
+ * @param result - The failed response.
+ * @param hasToken - Whether the request was authenticated.
  * @returns The error to throw, ending with GitHub's own words when it sent
  * some.
  */
@@ -656,7 +647,7 @@ export class GitHubClient {
   private readonly agent: Dispatcher | undefined;
 
   /**
-   * @param options The token and, for tests, the connections.
+   * @param options - The token and, for tests, the connections.
    */
   constructor(options: GitHubClientOptions) {
     this.token = options.token;
@@ -669,8 +660,7 @@ export class GitHubClient {
    * read without a token; private ones need a token with the 'repo' scope.
    * Transient failures are retried before they are reported, and a redirect
    * to a renamed repository on the same origin is followed.
-   *
-   * @param repo The repository, as `owner/repo`.
+   * @param repo - The repository, as `owner/repo`.
    * @returns The tag name of every release, drafts and pre-releases included.
    * @throws {SemanticReleaseError} If `repo` is not `owner/name`, on a network
    * failure, an HTTP error status, a redirect that is not followed, or a
@@ -716,8 +706,7 @@ export class GitHubClient {
    * Remove the token and anything shaped like a credential from text that is
    * about to be shown. A library may quote a header value that it rejects, and
    * a server may echo what it was sent.
-   *
-   * @param text Text that came from the network or from a library.
+   * @param text - Text that came from the network or from a library.
    * @returns The text without credentials.
    */
   private scrub(text: string): string {
