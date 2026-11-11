@@ -1,4 +1,9 @@
+/**
+ * @file Tests for the GitHub client and the request helper.
+ */
+
 import { afterEach, describe, expect, it } from '@jest/globals';
+import { readFile } from 'node:fs/promises';
 import { inspect } from 'node:util';
 import { MockAgent } from 'undici';
 import { GitHubClient, request, type RequestOptions } from '../src/github.js';
@@ -6,6 +11,12 @@ import { messageOf } from '../src/utils/error.js';
 import { startTunnelProxy } from './utils/proxy.js';
 import { listen, startFaultyProxy } from './utils/server.js';
 
+const insecureUrls: Record<string, string> = JSON.parse(
+  await readFile(
+    new URL('fixtures/insecure-urls.json', import.meta.url),
+    'utf8',
+  ),
+);
 const API = 'https://api.github.com';
 const PATH = '/repos/o/r/releases?per_page=100';
 
@@ -18,9 +29,12 @@ interface Reply {
 /**
  * A mock agent that answers the releases request with the given replies in
  * order, the last one repeating. Nothing else is reachable.
- *
- * @param replies What to answer with.
+ * @param replies - What to answer with.
  * @returns The agent, and the headers of each request it received.
+ * @example
+ * ```ts
+ * const { agent, seen } = mockReleases({ body: [{ tag_name: 'v1.0.0' }] });
+ * ```
  */
 const mockReleases = (
   ...replies: readonly Reply[]
@@ -52,11 +66,23 @@ const mockReleases = (
   return { agent, seen };
 };
 
-const failure = async (client: GitHubClient, repo = 'o/r'): Promise<string> =>
-  client.listReleaseTags(repo).then(
-    () => 'resolved',
-    (error: unknown) => messageOf(error),
-  );
+const thrownBy = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    await promise;
+  } catch (error: unknown) {
+    return error;
+  }
+  return undefined;
+};
+
+const failure = async (client: GitHubClient, repo = 'o/r'): Promise<string> => {
+  try {
+    await client.listReleaseTags(repo);
+    return 'resolved';
+  } catch (error: unknown) {
+    return messageOf(error);
+  }
+};
 
 describe('GitHubClient.listReleaseTags', () => {
   it('lists the tag names, asking for the latest 100 releases', async () => {
@@ -96,7 +122,9 @@ describe('GitHubClient.listReleaseTags', () => {
     const text = await failure(new GitHubClient({ token, agent }));
 
     expect(text).toMatch(
-      new RegExp(`^Failed to fetch releases from o/r \\(${status}\\)\\. `),
+      new RegExp(
+        String.raw`^Failed to fetch releases from o/r \(${status}\)\. `,
+      ),
     );
     expect(text).toMatch(message);
   });
@@ -120,7 +148,7 @@ describe('GitHubClient.listReleaseTags', () => {
     expect(texts[0]?.text).toMatch(/throttling.*Providing a GitHub token/);
     expect(texts[1]?.text).toMatch(/throttling.*Try again later/);
     expect(texts[2]?.text).toMatch(/Please check repository URL/);
-  }, 20000);
+  }, 20_000);
 
   it.each([
     ['an object', { tag_name: 'v1.0.0' }],
@@ -237,28 +265,26 @@ describe('GitHubClient failure messages', () => {
     const { agent } = mockReleases({
       status: 301,
       headers: {
-        location: 'http://api.github.com/repos/n/r/releases?access=1',
+        location: 'https://other.example/repos/n/r/releases?access=1',
       },
     });
 
-    const error = await new GitHubClient({ token: 'T', agent })
-      .listReleaseTags('o/r')
-      .catch((e: unknown) => e);
+    const error = await thrownBy(
+      new GitHubClient({ token: 'T', agent }).listReleaseTags('o/r'),
+    );
 
     expect(error).toMatchObject({ code: 'EREDIRECT' });
     expect(messageOf(error)).toContain(
-      'answered 301 with a redirect to http://api.github.com/repos/n/r/releases, which is not followed',
+      'answered 301 with a redirect to https://other.example/repos/n/r/releases, which is not followed',
     );
     expect(messageOf(error)).not.toContain('access=1');
   });
 
   it('refuses a malformed proxy setting without printing it', async () => {
     const saved = { ...process.env };
-    process.env['HTTPS_PROXY'] = 'http://user:PW-SECRET@bad host:3128';
+    process.env['HTTPS_PROXY'] = insecureUrls.proxyWithCredentials;
     try {
-      const error = await new GitHubClient({})
-        .listReleaseTags('o/r')
-        .catch((e: unknown) => e);
+      const error = await thrownBy(new GitHubClient({}).listReleaseTags('o/r'));
 
       expect(error).toMatchObject({ code: 'EPROXY' });
       const shown = [
@@ -274,32 +300,32 @@ describe('GitHubClient failure messages', () => {
   });
 });
 
+const stops: (() => Promise<void>)[] = [];
+const saved = { ...process.env };
+
+const serve = async (
+  handler: Parameters<typeof listen>[0],
+): ReturnType<typeof listen> => {
+  const server = await listen(handler);
+  stops.push(server.close);
+  return server;
+};
+
+const through = (proxyUrl: string, noProxy = ''): void => {
+  process.env['HTTP_PROXY'] = proxyUrl;
+  process.env['NO_PROXY'] = noProxy;
+  delete process.env['http_proxy'];
+  delete process.env['no_proxy'];
+};
+
+afterEach(async () => {
+  process.env = { ...saved };
+  await Promise.all(stops.splice(0).map((stop) => stop()));
+});
+
+const fast: RequestOptions = { minTimeout: 1 };
+
 describe('request over a real socket', () => {
-  const stops: (() => Promise<void>)[] = [];
-  const saved = { ...process.env };
-
-  const serve = async (
-    handler: Parameters<typeof listen>[0],
-  ): ReturnType<typeof listen> => {
-    const server = await listen(handler);
-    stops.push(server.close);
-    return server;
-  };
-
-  const through = (proxyUrl: string, noProxy = ''): void => {
-    process.env['HTTP_PROXY'] = proxyUrl;
-    process.env['NO_PROXY'] = noProxy;
-    delete process.env['http_proxy'];
-    delete process.env['no_proxy'];
-  };
-
-  afterEach(async () => {
-    process.env = { ...saved };
-    await Promise.all(stops.splice(0).map((stop) => stop()));
-  });
-
-  const fast: RequestOptions = { minTimeout: 1 };
-
   it('sends the default headers once, whatever the case of an override', async () => {
     const headers: unknown[] = [];
     const { url } = await serve((req, res) => {
@@ -367,20 +393,49 @@ describe('request over a real socket', () => {
   });
 
   it('cancels a wait for the next attempt when the deadline passes', async () => {
-    const timers = (): number =>
-      process.getActiveResourcesInfo().filter((name) => name === 'Timeout')
-        .length;
-    const { url } = await serve((_req, res) => {
-      res.writeHead(503, { 'Retry-After': '3600' }).end('busy');
-    });
-    const before = timers();
+    // The wait before a retry is capped at a quarter of the deadline: 100 ms.
+    const waitMs = 100;
+    const pending = new Set<ReturnType<typeof setTimeout>>();
+    const realSet = globalThis.setTimeout;
+    const realClear = globalThis.clearTimeout;
+    globalThis.setTimeout = ((
+      handler: () => void,
+      ms?: number,
+      ...rest: unknown[]
+    ) => {
+      const timer: ReturnType<typeof setTimeout> = realSet(
+        (...args: unknown[]) => {
+          pending.delete(timer);
+          handler.apply(undefined, args as []);
+        },
+        ms,
+        ...rest,
+      );
+      if (ms === waitMs) {
+        pending.add(timer);
+      }
+      return timer;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((timer?: ReturnType<typeof setTimeout>) => {
+      if (timer !== undefined) {
+        pending.delete(timer);
+      }
+      realClear(timer);
+    }) as typeof clearTimeout;
+    try {
+      const { url } = await serve((_req, res) => {
+        res.writeHead(503, { 'Retry-After': '3600' }).end('busy');
+      });
 
-    await expect(
-      request(`${url}/a`, {}, { retries: 10, deadlineMs: 400 }),
-    ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+      await expect(
+        request(`${url}/a`, {}, { retries: 10, deadlineMs: 400 }),
+      ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
 
-    expect(timers()).toBeLessThanOrEqual(before);
+      expect(pending.size).toBe(0);
+    } finally {
+      globalThis.setTimeout = realSet;
+      globalThis.clearTimeout = realClear;
+    }
   });
 
   it('retries an attempt that stalls, as a dropped connection is', async () => {
@@ -398,7 +453,7 @@ describe('request over a real socket', () => {
 
     expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
     expect(seen).toHaveLength(2);
-  }, 15000);
+  }, 15_000);
 
   it('gives up with one request per attempt when every attempt stalls', async () => {
     const { url, seen } = await serve(() => undefined);
@@ -411,7 +466,7 @@ describe('request over a real socket', () => {
       ),
     ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
     expect(seen).toHaveLength(2);
-  }, 15000);
+  }, 15_000);
 
   it('stops at the deadline', async () => {
     const { url } = await serve(() => undefined);
@@ -421,7 +476,7 @@ describe('request over a real socket', () => {
       /aborted due to timeout/,
     );
     expect(Date.now() - started).toBeLessThan(2000);
-  }, 15000);
+  }, 15_000);
 
   it('sends exactly retries + 1 whole requests when the body is always cut short', async () => {
     const { url, seen } = await serve((_req, res) => {
@@ -434,8 +489,10 @@ describe('request over a real socket', () => {
       request(`${url}/a`, {}, { retries: 2, minTimeout: 1 }),
     ).rejects.toThrow(/other side closed/);
     expect(seen).toEqual(['GET /a', 'GET /a', 'GET /a']);
-  }, 15000);
+  }, 15_000);
+});
 
+describe('request body and proxy over a real socket', () => {
   it('sends the whole request again, never a Range resume, when the body is cut once', async () => {
     const { url, seen } = await serve((_req, res) => {
       if (seen.length === 1) {
@@ -469,11 +526,13 @@ describe('request over a real socket', () => {
     const server = await listen(() => undefined);
     await server.close();
 
-    const error = await request(
-      `http://localhost:${server.port}/a?token=SECRET`,
-      { headers: { Authorization: 'Bearer SECRET' } },
-      fast,
-    ).catch((e: unknown) => e);
+    const error = await thrownBy(
+      request(
+        `http://localhost:${server.port}/a?token=SECRET`,
+        { headers: { Authorization: 'Bearer SECRET' } },
+        fast,
+      ),
+    );
 
     expect(String(error)).toContain('ECONNREFUSED');
     expect(String(error)).not.toContain('SECRET');
@@ -484,8 +543,7 @@ describe('request over a real socket', () => {
     const proxy = await startTunnelProxy(target.port);
     stops.push(proxy.close);
     through(proxy.url);
-
-    const result = await request('http://something.invalid/a', {});
+    const result = await request(insecureUrls.tunnelledTarget, {});
 
     expect(result.body).toEqual({ direct: 1 });
     expect(proxy.tunnelled).toEqual(['something.invalid:80']);
@@ -513,7 +571,7 @@ describe('request over a real socket', () => {
 
       await expect(
         request(
-          'http://something.invalid/a',
+          insecureUrls.tunnelledTarget,
           {},
           { retries: 1, deadlineMs: 1500, minTimeout: 1 },
         ),
@@ -524,125 +582,127 @@ describe('request over a real socket', () => {
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(proxy.connects()).toBe(connects);
     },
-    15000,
+    15_000,
   );
+});
 
-  describe('redirects', () => {
-    it('are not followed unless asked for, and the target is shown without its query', async () => {
-      const { url, seen } = await serve((_req, res) => {
-        res.writeHead(302, { Location: '/elsewhere?token=SECRET' });
-        res.end();
-      });
-
-      const result = await request(`${url}/a`, {});
-
-      expect(result).toMatchObject({
-        status: 302,
-        ok: false,
-        location: `${url}/elsewhere`,
-      });
-      expect(JSON.stringify(result)).not.toContain('SECRET');
-      expect(seen).toEqual(['GET /a']);
+describe('request redirects over a real socket', () => {
+  it('are not followed unless asked for, and the target is shown without its query', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(302, { Location: '/elsewhere?token=SECRET' });
+      res.end();
     });
 
-    it('are followed on the same origin when asked for, credentials included', async () => {
-      const headers: unknown[] = [];
-      const { url, seen } = await serve((req, res) => {
-        headers.push(req.headers['authorization']);
-        if (seen.length === 1) {
-          res.writeHead(301, { Location: '/b?x=1' }).end();
-          return;
-        }
-        res.end('{"ok":1}');
-      });
+    const result = await request(`${url}/a`, {});
 
-      const result = await request(
-        `${url}/a`,
-        { headers: { Authorization: 'Bearer T' } },
-        { followRedirects: true },
-      );
+    expect(result).toMatchObject({
+      status: 302,
+      ok: false,
+      location: `${url}/elsewhere`,
+    });
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+    expect(seen).toEqual(['GET /a']);
+  });
 
-      expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
-      expect(seen).toEqual(['GET /a', 'GET /b?x=1']);
-      expect(headers).toEqual(['Bearer T', 'Bearer T']);
+  it('are followed on the same origin when asked for, credentials included', async () => {
+    const headers: unknown[] = [];
+    const { url, seen } = await serve((req, res) => {
+      headers.push(req.headers['authorization']);
+      if (seen.length === 1) {
+        res.writeHead(301, { Location: '/b?x=1' }).end();
+        return;
+      }
+      res.end('{"ok":1}');
     });
 
-    it('are not followed to another origin, so the credentials stay put', async () => {
-      const other = await serve((_req, res) => res.end('{"leak":1}'));
-      const { url } = await serve((_req, res) => {
-        res.writeHead(302, { Location: `${other.url}/x?token=SECRET` }).end();
-      });
+    const result = await request(
+      `${url}/a`,
+      { headers: { Authorization: 'Bearer T' } },
+      { followRedirects: true },
+    );
 
-      const result = await request(
-        `${url}/a`,
-        { headers: { Authorization: 'Bearer T' } },
-        { followRedirects: true },
-      );
+    expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
+    expect(seen).toEqual(['GET /a', 'GET /b?x=1']);
+    expect(headers).toEqual(['Bearer T', 'Bearer T']);
+  });
 
-      expect(result).toMatchObject({
-        status: 302,
-        location: `${other.url}/x`,
-      });
-      expect(other.seen).toHaveLength(0);
+  it('are not followed to another origin, so the credentials stay put', async () => {
+    const other = await serve((_req, res) => res.end('{"leak":1}'));
+    const { url } = await serve((_req, res) => {
+      res.writeHead(302, { Location: `${other.url}/x?token=SECRET` }).end();
     });
 
-    it('are not followed from https to http', async () => {
-      const agent = new MockAgent();
-      agent.disableNetConnect();
-      agent
-        .get('https://x.test')
-        .intercept({ path: '/a', method: 'GET' })
-        .reply(301, '', { headers: { location: 'http://x.test/b?access=1' } });
+    const result = await request(
+      `${url}/a`,
+      { headers: { Authorization: 'Bearer T' } },
+      { followRedirects: true },
+    );
 
-      const result = await request(
-        'https://x.test/a',
-        {},
-        { agent, followRedirects: true },
-      );
-
-      expect(result).toMatchObject({
-        status: 301,
-        location: 'http://x.test/b',
-      });
+    expect(result).toMatchObject({
+      status: 302,
+      location: `${other.url}/x`,
     });
+    expect(other.seen).toHaveLength(0);
+  });
 
-    it('stop after three hops and report the last redirect', async () => {
-      const { url, seen } = await serve((_req, res) => {
-        res.writeHead(301, { Location: '/again' }).end();
+  it('are not followed from https to http', async () => {
+    const agent = new MockAgent();
+    agent.disableNetConnect();
+    agent
+      .get('https://x.test')
+      .intercept({ path: '/a', method: 'GET' })
+      .reply(301, '', {
+        headers: { location: insecureUrls.downgradeLocation },
       });
 
-      const result = await request(`${url}/a`, {}, { followRedirects: true });
+    const result = await request(
+      'https://x.test/a',
+      {},
+      { agent, followRedirects: true },
+    );
 
-      expect(result).toMatchObject({ status: 301, location: `${url}/again` });
-      expect(seen).toHaveLength(4);
+    expect(result).toMatchObject({
+      status: 301,
+      location: insecureUrls.downgradeLocationShown,
+    });
+  });
+
+  it('stop after three hops and report the last redirect', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(301, { Location: '/again' }).end();
     });
 
-    it('are not followed for a POST', async () => {
-      const { url, seen } = await serve((_req, res) => {
-        res.writeHead(307, { Location: '/b' }).end();
-      });
+    const result = await request(`${url}/a`, {}, { followRedirects: true });
 
-      const result = await request(
-        `${url}/a`,
-        { method: 'POST', body: 'a=1' },
-        { followRedirects: true },
-      );
+    expect(result).toMatchObject({ status: 301, location: `${url}/again` });
+    expect(seen).toHaveLength(4);
+  });
 
-      expect(result.status).toBe(307);
-      expect(seen).toEqual(['POST /a']);
+  it('are not followed for a POST', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(307, { Location: '/b' }).end();
     });
 
-    it('are not followed without a usable location', async () => {
-      const { url, seen } = await serve((_req, res) => {
-        res.writeHead(302).end();
-      });
+    const result = await request(
+      `${url}/a`,
+      { method: 'POST', body: 'a=1' },
+      { followRedirects: true },
+    );
 
-      const result = await request(`${url}/a`, {}, { followRedirects: true });
+    expect(result.status).toBe(307);
+    expect(seen).toEqual(['POST /a']);
+  });
 
-      expect(result).toMatchObject({ status: 302 });
-      expect(result.location).toBeUndefined();
-      expect(seen).toHaveLength(1);
+  it('are not followed without a usable location', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(302).end();
     });
+
+    const result = await request(`${url}/a`, {}, { followRedirects: true });
+
+    expect(result).toMatchObject({ status: 302 });
+    expect(result.location).toBeUndefined();
+    expect(seen).toHaveLength(1);
   });
 });
 
@@ -672,15 +732,13 @@ describe('request with a mock agent', () => {
     expect(
       await request(URL_A, {}, { agent: via([[502, '<html>bad</html>']]) }),
     ).toMatchObject({ status: 502, ok: false, body: '<html>bad</html>' });
-    expect(
-      (await request(URL_A, {}, { agent: via([[200, '']]) })).body,
-    ).toBeUndefined();
+    const empty = await request(URL_A, {}, { agent: via([[200, '']]) });
+    expect(empty.body).toBeUndefined();
   });
 
   it('does not retry unless asked to', async () => {
-    expect(
-      (await request(URL_A, {}, { agent: via([[503, 'x']]) })).status,
-    ).toBe(503);
+    const result = await request(URL_A, {}, { agent: via([[503, 'x']]) });
+    expect(result.status).toBe(503);
   });
 
   it('returns the last response once the retries are used up', async () => {

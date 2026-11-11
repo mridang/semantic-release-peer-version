@@ -1,3 +1,7 @@
+/**
+ * @file Tests for the text helpers.
+ */
+
 import { describe, expect, it } from '@jest/globals';
 // noinspection ES6PreferShortImport
 import { truncate } from '../../src/utils/text.js';

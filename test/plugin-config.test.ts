@@ -1,3 +1,7 @@
+/**
+ * @file Tests for the plugin configuration checks.
+ */
+
 import { describe, expect, it } from '@jest/globals';
 // noinspection ES6PreferShortImport
 import {

@@ -1,3 +1,7 @@
+/**
+ * @file Tests for the plugin steps, against the real API when it allows.
+ */
+
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import semver from 'semver';
 import { isRecord, stringAt } from '../src/utils/object.js';
@@ -7,7 +11,7 @@ import { GitHubClient } from '../src/github.js';
 import { commit, stepContext, type AnalyzeContext } from './utils/context.js';
 import type { VerifyConditionsContext } from 'semantic-release';
 
-jest.setTimeout(30000);
+jest.setTimeout(30_000);
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -18,8 +22,11 @@ const token = process.env['GITHUB_TOKEN'];
 /**
  * How many more requests GitHub will accept from this machine. The rate limit
  * endpoint is not itself counted.
- *
  * @returns The remaining requests, or 0 when it cannot be read.
+ * @example
+ * ```ts
+ * const left = await remainingRequests(); // e.g. 60 without a token
+ * ```
  */
 const remainingRequests = async (): Promise<number> => {
   const response = await fetch('https://api.github.com/rate_limit', {
@@ -151,7 +158,8 @@ describe('plugin steps with the GitHub client stubbed', () => {
   });
 
   describe('analyzeCommits', () => {
-    const make = (header: string, lastRelease: object = { version: '1.0.0' }) =>
+    const defaultRelease = { version: '1.0.0' };
+    const make = (header: string, lastRelease: object = defaultRelease) =>
       stepContext<AnalyzeContext>({ lastRelease, commits: [commit(header)] });
 
     it('requires a valid repo even when no major bump is checked', async () => {

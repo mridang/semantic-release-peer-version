@@ -1,7 +1,11 @@
-import { readFileSync } from 'fs';
+/**
+ * @file The semantic-release configuration, which publishes the package and its tarball.
+ */
+
+import { readFile } from 'node:fs/promises';
 
 const packageJson = JSON.parse(
-  readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
+  await readFile(new URL('package.json', import.meta.url), 'utf8'),
 );
 
 export default {

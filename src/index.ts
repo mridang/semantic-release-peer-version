@@ -1,3 +1,7 @@
+/**
+ * @file The semantic-release plugin that caps a major release at the upstream major version.
+ */
+
 import { createRequire } from 'node:module';
 import SemanticReleaseError from '@semantic-release/error';
 import { analyzeCommits as commitAnalyser } from '@semantic-release/commit-analyzer';
@@ -22,20 +26,24 @@ const require = createRequire(import.meta.url);
  * Fetches up to the last 100 releases of the repository and returns the tag
  * of the highest semantic version among them (for example "v1.2.3" or
  * "1.3.0-beta.1"). Tags that are not valid semver are ignored.
- *
- * @param config The plugin configuration.
+ * @param config - The plugin configuration.
  * @returns The highest semver-valid release tag.
- * @throws {SemanticReleaseError} If the releases cannot be fetched or read
+ * @rejects {SemanticReleaseError} If the releases cannot be fetched or read
  * (see {@link GitHubClient.listReleaseTags}), or none of the latest 100
  * releases has a valid semver tag.
+ * @example
+ * ```ts
+ * const tag = await getLatestSemverTag({ repo: 'cli/cli' }); // e.g. 'v2.40.0'
+ * ```
  */
 async function getLatestSemverTag(config: PluginConfig): Promise<string> {
   const tags = await new GitHubClient({
     token: config.githubToken,
   }).listReleaseTags(config.repo);
-  const [latest] = tags
+  const latest = tags
     .filter((tag) => semver.valid(tag) !== null)
-    .toSorted(semver.rcompare);
+    .toSorted(semver.rcompare)
+    .at(0);
   if (latest === undefined) {
     throw new SemanticReleaseError(
       `No valid semver release tags found among the latest 100 releases for ${config.repo}. Unable to determine the latest version.`,
@@ -45,17 +53,20 @@ async function getLatestSemverTag(config: PluginConfig): Promise<string> {
 }
 
 /**
- * semantic-release `verifyConditions` step. Finds the latest semantic version
+ * Semantic-release `verifyConditions` step. Finds the latest semantic version
  * tag in the upstream repository `config.repo`, so that a release fails early
  * when GitHub cannot be reached or the repository has no semver release. Its
  * major version is the cap that `analyzeCommits` enforces.
  * The `githubToken` is only needed for private repositories or to avoid rate
  * limits.
- *
- * @param config The plugin configuration.
- * @param context The semantic-release context.
+ * @param config - The plugin configuration.
+ * @param context - The semantic-release context.
  * @throws {SemanticReleaseError} If `repo` is not configured, or the latest
  * tag cannot be determined.
+ * @example
+ * ```ts
+ * await verifyConditions({ repo: 'cli/cli' }, context); // logs the major cap
+ * ```
  */
 export async function verifyConditions(
   config: PluginConfig,
@@ -71,10 +82,13 @@ export async function verifyConditions(
 /**
  * The configuration for the underlying commit analyzer: the user's own, or the
  * `conventionalcommits` preset when none was given.
- *
- * @param config The plugin configuration.
- * @param logger The semantic-release logger.
+ * @param config - The plugin configuration.
+ * @param logger - The semantic-release logger.
  * @returns The configuration to hand to the commit analyzer.
+ * @example
+ * ```ts
+ * analyzerConfigOf({ repo: 'o/r' }, context.logger); // { config: '<conventionalcommits preset>' }
+ * ```
  */
 function analyzerConfigOf(
   config: PluginConfig,
@@ -94,17 +108,20 @@ function analyzerConfigOf(
 }
 
 /**
- * semantic-release `analyzeCommits` step. Delegates to the standard commit
+ * Semantic-release `analyzeCommits` step. Delegates to the standard commit
  * analyzer, then blocks a `major` release whose new major version would exceed
  * the major version of the latest release in the upstream repository
  * `config.repo`. Any other release type is returned untouched.
- *
- * @param config The plugin configuration.
- * @param context The semantic-release context.
+ * @param config - The plugin configuration.
+ * @param context - The semantic-release context.
  * @returns The release type (`major`, `minor`, `patch`), or null when no
  * release is warranted.
- * @throws {SemanticReleaseError} If the next major version would exceed the
+ * @rejects {SemanticReleaseError} If the next major version would exceed the
  * upstream major version, or the upstream cap cannot be determined.
+ * @example
+ * ```ts
+ * const releaseType = await analyzeCommits({ repo: 'cli/cli' }, context); // 'minor'
+ * ```
  */
 export async function analyzeCommits(
   config: PluginConfig,

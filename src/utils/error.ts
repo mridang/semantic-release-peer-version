@@ -1,3 +1,7 @@
+/**
+ * @file Reads the message and the code of values that were thrown.
+ */
+
 import { isRecord, stringAt } from './object.js';
 
 /**
@@ -8,9 +12,13 @@ import { isRecord, stringAt } from './object.js';
  *
  * Errors are recognised by shape rather than by `instanceof`, because errors
  * raised by Node itself can come from another realm (a test sandbox, for one).
- *
- * @param error A caught value, which is not necessarily an `Error`.
+ * @param error - A caught value, which is not necessarily an `Error`.
  * @returns Its message, or its string form when it is not an `Error`.
+ * @example
+ * ```ts
+ * messageOf(new Error('boom')); // 'boom'
+ * messageOf(Object.assign(new Error(''), { code: 'ECONNREFUSED' })); // 'ECONNREFUSED'
+ * ```
  */
 export function messageOf(error: unknown): string {
   if (!isRecord(error) || typeof error.message !== 'string') {
@@ -28,9 +36,13 @@ export function messageOf(error: unknown): string {
 
 /**
  * The `code` of anything that was thrown, such as a `SemanticReleaseError`.
- *
- * @param error A caught value.
+ * @param error - A caught value.
  * @returns Its string `code`, or undefined when it has none.
+ * @example
+ * ```ts
+ * codeOf(Object.assign(new Error('x'), { code: 'EBOOM' })); // 'EBOOM'
+ * codeOf(new Error('x')); // undefined
+ * ```
  */
 export function codeOf(error: unknown): string | undefined {
   return isRecord(error) ? stringAt(error, 'code') : undefined;
