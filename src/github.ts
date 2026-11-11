@@ -426,7 +426,6 @@ export interface RequestOptions {
   readonly followRedirects?: boolean;
 }
 
-/* eslint-disable jsdoc/check-tag-names -- @rejects is the tag jsdoc/require-rejects asks for, which check-tag-names does not list */
 
 /**
  * Perform a request and decode a JSON (or fall back to text) response.
@@ -584,7 +583,6 @@ export async function request(
     await own?.destroy().catch(() => undefined);
   }
 }
-/* eslint-enable jsdoc/check-tag-names -- end of the @rejects exception */
 
 /**
  * The root of the GitHub REST API.
@@ -737,7 +735,6 @@ export class GitHubClient {
     this.agent = options.agent;
   }
 
-  /* eslint-disable jsdoc/check-tag-names -- @rejects is the tag jsdoc/require-rejects asks for, which check-tag-names does not list */
 
   /**
    * List the tag names of up to the latest 100 releases of a repository,
@@ -791,7 +788,6 @@ export class GitHubClient {
     }
     return tags;
   }
-  /* eslint-enable jsdoc/check-tag-names -- end of the @rejects exception */
 
   /**
    * Remove the token and anything shaped like a credential from text that is

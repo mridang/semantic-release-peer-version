@@ -22,7 +22,6 @@ export type { PluginConfig } from './plugin-config.js';
 
 const require = createRequire(import.meta.url);
 
-/* eslint-disable jsdoc/check-tag-names -- @rejects is the tag jsdoc/require-rejects asks for, which check-tag-names does not list */
 
 /**
  * Fetches up to the last 100 releases of the repository and returns the tag
@@ -53,7 +52,6 @@ async function getLatestSemverTag(config: PluginConfig): Promise<string> {
   }
   return latest;
 }
-/* eslint-enable jsdoc/check-tag-names -- end of the @rejects exception */
 
 /**
  * Semantic-release `verifyConditions` step. Finds the latest semantic version
@@ -110,7 +108,6 @@ function analyzerConfigOf(
   };
 }
 
-/* eslint-disable jsdoc/check-tag-names -- @rejects is the tag jsdoc/require-rejects asks for, which check-tag-names does not list */
 
 /**
  * Semantic-release `analyzeCommits` step. Delegates to the standard commit
@@ -172,6 +169,5 @@ export async function analyzeCommits(
   );
   return releaseType;
 }
-/* eslint-enable jsdoc/check-tag-names -- end of the @rejects exception */
 
 export default { verifyConditions, analyzeCommits } as const;
