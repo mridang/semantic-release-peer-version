@@ -503,17 +503,15 @@ export async function request(
             throwOnError: false,
             /* Cancel the wait when the deadline passes, so that it cannot hold
                the process after the call has given up. */
-            // eslint-disable-next-line promise/prefer-await-to-callbacks -- undici's RetryAgent retry option is callback based
-            retry: (error, { state, opts }, callback) => {
+            retry: (error, { state, opts }, resume) => {
               if (
                 !isRetryable(error, opts.method, methods, state.counter, left)
               ) {
-                // eslint-disable-next-line promise/prefer-await-to-callbacks -- undici's RetryAgent retry option is callback based
-                callback(error);
+                resume(error);
                 return;
               }
               const timer = setTimeout(
-                callback,
+                resume,
                 waitBeforeRetry(error, state.counter, minTimeout, capMs),
                 null,
               );

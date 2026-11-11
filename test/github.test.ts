@@ -393,21 +393,49 @@ describe('request over a real socket', () => {
   });
 
   it('cancels a wait for the next attempt when the deadline passes', async () => {
-    const timers = (): number =>
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins -- the devbox Node 22 release has the backported API
-      process.getActiveResourcesInfo().filter((name) => name === 'Timeout')
-        .length;
-    const { url } = await serve((_req, res) => {
-      res.writeHead(503, { 'Retry-After': '3600' }).end('busy');
-    });
-    const before = timers();
+    // The wait before a retry is capped at a quarter of the deadline: 100 ms.
+    const waitMs = 100;
+    const pending = new Set<ReturnType<typeof setTimeout>>();
+    const realSet = globalThis.setTimeout;
+    const realClear = globalThis.clearTimeout;
+    globalThis.setTimeout = ((
+      handler: () => void,
+      ms?: number,
+      ...rest: unknown[]
+    ) => {
+      const timer: ReturnType<typeof setTimeout> = realSet(
+        (...args: unknown[]) => {
+          pending.delete(timer);
+          handler.apply(undefined, args as []);
+        },
+        ms,
+        ...rest,
+      );
+      if (ms === waitMs) {
+        pending.add(timer);
+      }
+      return timer;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((timer?: ReturnType<typeof setTimeout>) => {
+      if (timer !== undefined) {
+        pending.delete(timer);
+      }
+      realClear(timer);
+    }) as typeof clearTimeout;
+    try {
+      const { url } = await serve((_req, res) => {
+        res.writeHead(503, { 'Retry-After': '3600' }).end('busy');
+      });
 
-    await expect(
-      request(`${url}/a`, {}, { retries: 10, deadlineMs: 400 }),
-    ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+      await expect(
+        request(`${url}/a`, {}, { retries: 10, deadlineMs: 400 }),
+      ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
 
-    expect(timers()).toBeLessThanOrEqual(before);
+      expect(pending.size).toBe(0);
+    } finally {
+      globalThis.setTimeout = realSet;
+      globalThis.clearTimeout = realClear;
+    }
   });
 
   it('retries an attempt that stalls, as a dropped connection is', async () => {
