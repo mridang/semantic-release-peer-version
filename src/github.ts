@@ -1,3 +1,7 @@
+/**
+ * @file The GitHub REST client: timeouts, retries, redirects and the releases lookup.
+ */
+
 import SemanticReleaseError from '@semantic-release/error';
 import {
   EnvHttpProxyAgent,
@@ -112,10 +116,17 @@ const BODY_PHASE_CODE = 'UND_ERR_BODY_PHASE';
  * request is sent again instead.
  */
 class BodyPhaseError extends Error {
+  override readonly name = 'BodyPhaseError';
+
   readonly code = BODY_PHASE_CODE;
 
   /**
+   * Wrap the error that undici reported for a connection lost mid-body.
    * @param cause - The error that undici reported.
+   * @example
+   * ```ts
+   * throw new BodyPhaseError(new Error('socket reset'));
+   * ```
    */
   constructor(cause: unknown) {
     super('the connection was lost while reading the response', { cause });
@@ -133,6 +144,10 @@ class BodyPhaseError extends Error {
  * @throws {SemanticReleaseError} If a proxy variable is not a valid proxy.
  * The message names the variables and never their value, which can hold a
  * password.
+ * @example
+ * ```ts
+ * const dispatcher = connections(30_000);
+ * ```
  */
 function connections(attemptTimeoutMs: number): Dispatcher {
   try {
@@ -162,6 +177,11 @@ function connections(attemptTimeoutMs: number): Dispatcher {
  * @param error - A caught value.
  * @param host - The host that was called.
  * @returns An error with the reason in its message.
+ * @example
+ * ```ts
+ * networkErrorFor(new TypeError('fetch failed'), 'api.github.com').message;
+ * // 'Network error calling api.github.com: fetch failed'
+ * ```
  */
 function networkErrorFor(error: unknown, host: string): Error {
   const reason =
@@ -176,6 +196,10 @@ function networkErrorFor(error: unknown, host: string): Error {
  * the retrying agent leaves it alone (see {@link BodyPhaseError}).
  * @param dispatch - The dispatch function to wrap.
  * @returns A dispatch function that wraps the handler.
+ * @example
+ * ```ts
+ * const dispatch = markBodyFailures(agent.dispatch.bind(agent));
+ * ```
  */
 function markBodyFailures(
   dispatch: Dispatcher['dispatch'],
@@ -212,6 +236,11 @@ function markBodyFailures(
  * @param text - The body as text.
  * @returns The parsed JSON, undefined for an empty body, else the first 500
  * characters of the text.
+ * @example
+ * ```ts
+ * decodeBody('{"ok":1}'); // { ok: 1 }
+ * decodeBody('busy'); // 'busy'
+ * ```
  */
 function decodeBody(text: string): unknown {
   if (text === '') {
@@ -230,6 +259,11 @@ function decodeBody(text: string): unknown {
  * @param location - The `Location` header.
  * @param base - The URL that was called, for a relative `Location`.
  * @returns A URL that is safe to show, or undefined without a usable header.
+ * @example
+ * ```ts
+ * placeOf('/repos/o/r?token=x', new URL('https://api.github.com/a'));
+ * // 'https://api.github.com/repos/o/r'
+ * ```
  */
 function placeOf(location: unknown, base: URL): string | undefined {
   if (typeof location !== 'string' || !URL.canParse(location, base.href)) {
@@ -249,6 +283,11 @@ function placeOf(location: unknown, base: URL): string | undefined {
  * @param location - The `Location` header.
  * @returns The URL to call next, or undefined when the redirect is not to be
  * followed.
+ * @example
+ * ```ts
+ * sameOriginRedirect(new URL('https://api.github.com/a'), 'GET', 301, '/b');
+ * // URL of https://api.github.com/b
+ * ```
  */
 function sameOriginRedirect(
   from: URL,
@@ -276,6 +315,10 @@ function sameOriginRedirect(
  * @param attempt - Which retry this would be, starting at 1.
  * @param retries - How many retries are allowed.
  * @returns True to try again.
+ * @example
+ * ```ts
+ * isRetryable(new Error('reset'), 'GET', ['GET'], 1, 3); // true
+ * ```
  */
 function isRetryable(
   error: unknown,
@@ -307,6 +350,10 @@ function isRetryable(
  * @param minTimeoutMs - The first back-off.
  * @param capMs - The longest wait.
  * @returns The wait in milliseconds.
+ * @example
+ * ```ts
+ * waitBeforeRetry({}, 2, 500, 15_000); // 1000
+ * ```
  */
 function waitBeforeRetry(
   error: unknown,
@@ -333,11 +380,16 @@ function waitBeforeRetry(
 }
 
 /**
+ * The HTTP methods that {@link request} accepts.
+ */
+type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'PUT' | 'DELETE' | 'POST';
+
+/**
  * What the caller of {@link request} can ask for.
  */
 export interface HttpRequest {
   /** The HTTP method. Defaults to `GET`. */
-  readonly method?: 'GET' | 'HEAD' | 'OPTIONS' | 'PUT' | 'DELETE' | 'POST';
+  readonly method?: HttpMethod;
   /** Extra headers, which replace the defaults of the same name in any case. */
   readonly headers?: Readonly<Record<string, string>>;
   /** A text or binary body, which can be sent again if the call is retried. */
@@ -374,6 +426,8 @@ export interface RequestOptions {
   readonly followRedirects?: boolean;
 }
 
+/* eslint-disable jsdoc/check-tag-names -- @rejects is the tag jsdoc/require-rejects asks for, which check-tag-names does not list */
+
 /**
  * Perform a request and decode a JSON (or fall back to text) response.
  *
@@ -391,13 +445,21 @@ export interface RequestOptions {
  * which also stops a proxy tunnel that is still being set up.
  *
  * Undici's `request` is used rather than `fetch` because `fetch` turns a body
- * into a one-shot stream, which undici cannot send a second time..
+ * into a one-shot stream, which undici cannot send a second time.
  * @param url - Absolute URL to call.
  * @param init - Method, headers and body.
  * @param options - Timeouts, retries and, for tests, the connections.
  * @returns The status and decoded body.
- * @throws If the network call fails after the allowed attempts. The message
+ * @rejects {Error} If the network call fails after the allowed attempts. The message
  * names the host and never contains the URL, headers or body.
+ * @example
+ * ```ts
+ * const { status, body } = await request(
+ *   'https://api.github.com/repos/cli/cli/releases?per_page=1',
+ *   { headers: { accept: 'application/vnd.github+json' } },
+ *   { retries: 2, followRedirects: true },
+ * );
+ * ```
  */
 export async function request(
   url: string,
@@ -405,6 +467,7 @@ export async function request(
   options: RequestOptions = {},
 ): Promise<HttpResult> {
   const {
+    agent,
     attemptTimeoutMs = ATTEMPT_TIMEOUT_MS,
     deadlineMs = DEADLINE_MS,
     minTimeout = 500,
@@ -419,9 +482,8 @@ export async function request(
     ? [...IDEMPOTENT_METHODS, 'POST']
     : IDEMPOTENT_METHODS;
   const capMs = Math.min(MAX_BACKOFF_MS, Math.floor(deadlineMs / 4));
-  const own =
-    options.agent === undefined ? connections(attemptTimeoutMs) : undefined;
-  const base = options.agent ?? own;
+  const own = agent === undefined ? connections(attemptTimeoutMs) : undefined;
+  const base = agent ?? own;
   const deadline = AbortSignal.timeout(deadlineMs);
   const finished = new AbortController();
   const headers = Object.fromEntries(
@@ -441,12 +503,14 @@ export async function request(
         ? new RetryAgent(base.compose(markBodyFailures), {
             maxRetries: left,
             throwOnError: false,
-            // Cancel the wait when the deadline passes, so that it cannot
-            // hold the process after the call has given up.
+            /* Cancel the wait when the deadline passes, so that it cannot hold
+               the process after the call has given up. */
+            // eslint-disable-next-line promise/prefer-await-to-callbacks -- undici's RetryAgent retry option is callback based
             retry: (error, { state, opts }, callback) => {
               if (
                 !isRetryable(error, opts.method, methods, state.counter, left)
               ) {
+                // eslint-disable-next-line promise/prefer-await-to-callbacks -- undici's RetryAgent retry option is callback based
                 callback(error);
                 return;
               }
@@ -520,6 +584,7 @@ export async function request(
     await own?.destroy().catch(() => undefined);
   }
 }
+/* eslint-enable jsdoc/check-tag-names -- end of the @rejects exception */
 
 /**
  * The root of the GitHub REST API.
@@ -541,6 +606,11 @@ const MAX_DETAIL_CHARS = 2000;
  * @param payload - Parsed JSON from the releases endpoint.
  * @returns The tag name of every release, or undefined when the payload is not
  * an array of objects that all have a string `tag_name`.
+ * @example
+ * ```ts
+ * parseReleaseTags([{ tag_name: 'v1.0.0' }]); // ['v1.0.0']
+ * parseReleaseTags({}); // undefined
+ * ```
  */
 function parseReleaseTags(payload: unknown): readonly string[] | undefined {
   if (!Array.isArray(payload)) {
@@ -560,6 +630,10 @@ function parseReleaseTags(payload: unknown): readonly string[] | undefined {
  * @param rateLimited - Whether GitHub said that a rate limit was exceeded.
  * @param hasToken - Whether the request was authenticated.
  * @returns The explanation.
+ * @example
+ * ```ts
+ * reasonFor(401, false, true); // starts with "Authentication failed."
+ * ```
  */
 function reasonFor(
   status: number,
@@ -595,6 +669,11 @@ function reasonFor(
  * @param hasToken - Whether the request was authenticated.
  * @returns The error to throw, ending with GitHub's own words when it sent
  * some.
+ * @example
+ * ```ts
+ * errorFor('cli/cli', { status: 404, ok: false, body: {} }, false).message;
+ * // starts with 'Failed to fetch releases from cli/cli (404).'
+ * ```
  */
 function errorFor(
   repo: string,
@@ -647,12 +726,18 @@ export class GitHubClient {
   private readonly agent: Dispatcher | undefined;
 
   /**
+   * Create a client that sends the token, if one is given, with each request.
    * @param options - The token and, for tests, the connections.
+   * @example
+   * ```ts
+   * const client = new GitHubClient({ token: 'TOKEN' });
    */
   constructor(options: GitHubClientOptions) {
     this.token = options.token;
     this.agent = options.agent;
   }
+
+  /* eslint-disable jsdoc/check-tag-names -- @rejects is the tag jsdoc/require-rejects asks for, which check-tag-names does not list */
 
   /**
    * List the tag names of up to the latest 100 releases of a repository,
@@ -662,9 +747,14 @@ export class GitHubClient {
    * to a renamed repository on the same origin is followed.
    * @param repo - The repository, as `owner/repo`.
    * @returns The tag name of every release, drafts and pre-releases included.
-   * @throws {SemanticReleaseError} If `repo` is not `owner/name`, on a network
+   * @rejects {SemanticReleaseError} If `repo` is not `owner/name`, on a network
    * failure, an HTTP error status, a redirect that is not followed, or a
    * response that is not a list of releases with a `tag_name` each.
+   * @example
+   * ```ts
+   * const tags = await new GitHubClient({}).listReleaseTags('cli/cli');
+   * // e.g. ['v2.40.0', 'v2.39.0']
+   * ```
    */
   async listReleaseTags(repo: string): Promise<readonly string[]> {
     // Before anything is sent: the token must never go to a rewritten URL.
@@ -701,6 +791,7 @@ export class GitHubClient {
     }
     return tags;
   }
+  /* eslint-enable jsdoc/check-tag-names -- end of the @rejects exception */
 
   /**
    * Remove the token and anything shaped like a credential from text that is
@@ -708,6 +799,12 @@ export class GitHubClient {
    * a server may echo what it was sent.
    * @param text - Text that came from the network or from a library.
    * @returns The text without credentials.
+   * @example
+   * ```ts
+   * const client = new GitHubClient({ token: 'TOKEN' });
+   * client['scrub']('no such repo for TOKEN');
+   * // 'no such repo for [redacted]'
+   * ```
    */
   private scrub(text: string): string {
     return redactCredentials(

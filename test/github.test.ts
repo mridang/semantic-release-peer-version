@@ -1,3 +1,7 @@
+/**
+ * @file Tests for the GitHub client and the request helper.
+ */
+
 import { afterEach, describe, expect, it } from '@jest/globals';
 import { inspect } from 'node:util';
 import { MockAgent } from 'undici';
@@ -20,6 +24,10 @@ interface Reply {
  * order, the last one repeating. Nothing else is reachable.
  * @param replies - What to answer with.
  * @returns The agent, and the headers of each request it received.
+ * @example
+ * ```ts
+ * const { agent, seen } = mockReleases({ body: [{ tag_name: 'v1.0.0' }] });
+ * ```
  */
 const mockReleases = (
   ...replies: readonly Reply[]
@@ -51,11 +59,23 @@ const mockReleases = (
   return { agent, seen };
 };
 
-const failure = async (client: GitHubClient, repo = 'o/r'): Promise<string> =>
-  client.listReleaseTags(repo).then(
-    () => 'resolved',
-    (error: unknown) => messageOf(error),
-  );
+const thrownBy = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    await promise;
+  } catch (error: unknown) {
+    return error;
+  }
+  return undefined;
+};
+
+const failure = async (client: GitHubClient, repo = 'o/r'): Promise<string> => {
+  try {
+    await client.listReleaseTags(repo);
+    return 'resolved';
+  } catch (error: unknown) {
+    return messageOf(error);
+  }
+};
 
 describe('GitHubClient.listReleaseTags', () => {
   it('lists the tag names, asking for the latest 100 releases', async () => {
@@ -238,28 +258,27 @@ describe('GitHubClient failure messages', () => {
     const { agent } = mockReleases({
       status: 301,
       headers: {
-        location: 'http://api.github.com/repos/n/r/releases?access=1',
+        location: 'https://other.example/repos/n/r/releases?access=1',
       },
     });
 
-    const error = await new GitHubClient({ token: 'T', agent })
-      .listReleaseTags('o/r')
-      .catch((error_: unknown) => error_);
+    const error = await thrownBy(
+      new GitHubClient({ token: 'T', agent }).listReleaseTags('o/r'),
+    );
 
     expect(error).toMatchObject({ code: 'EREDIRECT' });
     expect(messageOf(error)).toContain(
-      'answered 301 with a redirect to http://api.github.com/repos/n/r/releases, which is not followed',
+      'answered 301 with a redirect to https://other.example/repos/n/r/releases, which is not followed',
     );
     expect(messageOf(error)).not.toContain('access=1');
   });
 
   it('refuses a malformed proxy setting without printing it', async () => {
     const saved = { ...process.env };
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- test fixture
     process.env['HTTPS_PROXY'] = 'http://user:PW-SECRET@bad host:3128';
     try {
-      const error = await new GitHubClient({})
-        .listReleaseTags('o/r')
-        .catch((error_: unknown) => error_);
+      const error = await thrownBy(new GitHubClient({}).listReleaseTags('o/r'));
 
       expect(error).toMatchObject({ code: 'EPROXY' });
       const shown = [
@@ -275,32 +294,32 @@ describe('GitHubClient failure messages', () => {
   });
 });
 
+const stops: (() => Promise<void>)[] = [];
+const saved = { ...process.env };
+
+const serve = async (
+  handler: Parameters<typeof listen>[0],
+): ReturnType<typeof listen> => {
+  const server = await listen(handler);
+  stops.push(server.close);
+  return server;
+};
+
+const through = (proxyUrl: string, noProxy = ''): void => {
+  process.env['HTTP_PROXY'] = proxyUrl;
+  process.env['NO_PROXY'] = noProxy;
+  delete process.env['http_proxy'];
+  delete process.env['no_proxy'];
+};
+
+afterEach(async () => {
+  process.env = { ...saved };
+  await Promise.all(stops.splice(0).map((stop) => stop()));
+});
+
+const fast: RequestOptions = { minTimeout: 1 };
+
 describe('request over a real socket', () => {
-  const stops: (() => Promise<void>)[] = [];
-  const saved = { ...process.env };
-
-  const serve = async (
-    handler: Parameters<typeof listen>[0],
-  ): ReturnType<typeof listen> => {
-    const server = await listen(handler);
-    stops.push(server.close);
-    return server;
-  };
-
-  const through = (proxyUrl: string, noProxy = ''): void => {
-    process.env['HTTP_PROXY'] = proxyUrl;
-    process.env['NO_PROXY'] = noProxy;
-    delete process.env['http_proxy'];
-    delete process.env['no_proxy'];
-  };
-
-  afterEach(async () => {
-    process.env = { ...saved };
-    await Promise.all(stops.splice(0).map((stop) => stop()));
-  });
-
-  const fast: RequestOptions = { minTimeout: 1 };
-
   it('sends the default headers once, whatever the case of an override', async () => {
     const headers: unknown[] = [];
     const { url } = await serve((req, res) => {
@@ -369,6 +388,7 @@ describe('request over a real socket', () => {
 
   it('cancels a wait for the next attempt when the deadline passes', async () => {
     const timers = (): number =>
+      // eslint-disable-next-line n/no-unsupported-features/node-builtins -- the devbox Node 22 release has the backported API
       process.getActiveResourcesInfo().filter((name) => name === 'Timeout')
         .length;
     const { url } = await serve((_req, res) => {
@@ -436,7 +456,9 @@ describe('request over a real socket', () => {
     ).rejects.toThrow(/other side closed/);
     expect(seen).toEqual(['GET /a', 'GET /a', 'GET /a']);
   }, 15_000);
+});
 
+describe('request body and proxy over a real socket', () => {
   it('sends the whole request again, never a Range resume, when the body is cut once', async () => {
     const { url, seen } = await serve((_req, res) => {
       if (seen.length === 1) {
@@ -470,11 +492,13 @@ describe('request over a real socket', () => {
     const server = await listen(() => undefined);
     await server.close();
 
-    const error = await request(
-      `http://localhost:${server.port}/a?token=SECRET`,
-      { headers: { Authorization: 'Bearer SECRET' } },
-      fast,
-    ).catch((error_: unknown) => error_);
+    const error = await thrownBy(
+      request(
+        `http://localhost:${server.port}/a?token=SECRET`,
+        { headers: { Authorization: 'Bearer SECRET' } },
+        fast,
+      ),
+    );
 
     expect(String(error)).toContain('ECONNREFUSED');
     expect(String(error)).not.toContain('SECRET');
@@ -486,6 +510,7 @@ describe('request over a real socket', () => {
     stops.push(proxy.close);
     through(proxy.url);
 
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols, unicorn/prefer-https -- test fixture: the proxy tunnels plain HTTP
     const result = await request('http://something.invalid/a', {});
 
     expect(result.body).toEqual({ direct: 1 });
@@ -514,6 +539,7 @@ describe('request over a real socket', () => {
 
       await expect(
         request(
+          // eslint-disable-next-line sonarjs/no-clear-text-protocols, unicorn/prefer-https -- test fixture: the proxy tunnels plain HTTP
           'http://something.invalid/a',
           {},
           { retries: 1, deadlineMs: 1500, minTimeout: 1 },
@@ -527,123 +553,125 @@ describe('request over a real socket', () => {
     },
     15_000,
   );
+});
 
-  describe('redirects', () => {
-    it('are not followed unless asked for, and the target is shown without its query', async () => {
-      const { url, seen } = await serve((_req, res) => {
-        res.writeHead(302, { Location: '/elsewhere?token=SECRET' });
-        res.end();
-      });
-
-      const result = await request(`${url}/a`, {});
-
-      expect(result).toMatchObject({
-        status: 302,
-        ok: false,
-        location: `${url}/elsewhere`,
-      });
-      expect(JSON.stringify(result)).not.toContain('SECRET');
-      expect(seen).toEqual(['GET /a']);
+describe('request redirects over a real socket', () => {
+  it('are not followed unless asked for, and the target is shown without its query', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(302, { Location: '/elsewhere?token=SECRET' });
+      res.end();
     });
 
-    it('are followed on the same origin when asked for, credentials included', async () => {
-      const headers: unknown[] = [];
-      const { url, seen } = await serve((req, res) => {
-        headers.push(req.headers['authorization']);
-        if (seen.length === 1) {
-          res.writeHead(301, { Location: '/b?x=1' }).end();
-          return;
-        }
-        res.end('{"ok":1}');
-      });
+    const result = await request(`${url}/a`, {});
 
-      const result = await request(
-        `${url}/a`,
-        { headers: { Authorization: 'Bearer T' } },
-        { followRedirects: true },
-      );
+    expect(result).toMatchObject({
+      status: 302,
+      ok: false,
+      location: `${url}/elsewhere`,
+    });
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+    expect(seen).toEqual(['GET /a']);
+  });
 
-      expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
-      expect(seen).toEqual(['GET /a', 'GET /b?x=1']);
-      expect(headers).toEqual(['Bearer T', 'Bearer T']);
+  it('are followed on the same origin when asked for, credentials included', async () => {
+    const headers: unknown[] = [];
+    const { url, seen } = await serve((req, res) => {
+      headers.push(req.headers['authorization']);
+      if (seen.length === 1) {
+        res.writeHead(301, { Location: '/b?x=1' }).end();
+        return;
+      }
+      res.end('{"ok":1}');
     });
 
-    it('are not followed to another origin, so the credentials stay put', async () => {
-      const other = await serve((_req, res) => res.end('{"leak":1}'));
-      const { url } = await serve((_req, res) => {
-        res.writeHead(302, { Location: `${other.url}/x?token=SECRET` }).end();
-      });
+    const result = await request(
+      `${url}/a`,
+      { headers: { Authorization: 'Bearer T' } },
+      { followRedirects: true },
+    );
 
-      const result = await request(
-        `${url}/a`,
-        { headers: { Authorization: 'Bearer T' } },
-        { followRedirects: true },
-      );
+    expect(result).toMatchObject({ status: 200, body: { ok: 1 } });
+    expect(seen).toEqual(['GET /a', 'GET /b?x=1']);
+    expect(headers).toEqual(['Bearer T', 'Bearer T']);
+  });
 
-      expect(result).toMatchObject({
-        status: 302,
-        location: `${other.url}/x`,
-      });
-      expect(other.seen).toHaveLength(0);
+  it('are not followed to another origin, so the credentials stay put', async () => {
+    const other = await serve((_req, res) => res.end('{"leak":1}'));
+    const { url } = await serve((_req, res) => {
+      res.writeHead(302, { Location: `${other.url}/x?token=SECRET` }).end();
     });
 
-    it('are not followed from https to http', async () => {
-      const agent = new MockAgent();
-      agent.disableNetConnect();
-      agent
-        .get('https://x.test')
-        .intercept({ path: '/a', method: 'GET' })
-        .reply(301, '', { headers: { location: 'http://x.test/b?access=1' } });
+    const result = await request(
+      `${url}/a`,
+      { headers: { Authorization: 'Bearer T' } },
+      { followRedirects: true },
+    );
 
-      const result = await request(
-        'https://x.test/a',
-        {},
-        { agent, followRedirects: true },
-      );
+    expect(result).toMatchObject({
+      status: 302,
+      location: `${other.url}/x`,
+    });
+    expect(other.seen).toHaveLength(0);
+  });
 
-      expect(result).toMatchObject({
-        status: 301,
-        location: 'http://x.test/b',
-      });
+  it('are not followed from https to http', async () => {
+    const agent = new MockAgent();
+    agent.disableNetConnect();
+    agent
+      .get('https://x.test')
+      .intercept({ path: '/a', method: 'GET' })
+      // eslint-disable-next-line unicorn/prefer-https -- test fixture: the redirect must be a downgrade to HTTP
+      .reply(301, '', { headers: { location: 'http://x.test/b?access=1' } });
+
+    const result = await request(
+      'https://x.test/a',
+      {},
+      { agent, followRedirects: true },
+    );
+
+    expect(result).toMatchObject({
+      status: 301,
+      // eslint-disable-next-line unicorn/prefer-https -- test fixture: the redirect must be a downgrade to HTTP
+      location: 'http://x.test/b',
+    });
+  });
+
+  it('stop after three hops and report the last redirect', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(301, { Location: '/again' }).end();
     });
 
-    it('stop after three hops and report the last redirect', async () => {
-      const { url, seen } = await serve((_req, res) => {
-        res.writeHead(301, { Location: '/again' }).end();
-      });
+    const result = await request(`${url}/a`, {}, { followRedirects: true });
 
-      const result = await request(`${url}/a`, {}, { followRedirects: true });
+    expect(result).toMatchObject({ status: 301, location: `${url}/again` });
+    expect(seen).toHaveLength(4);
+  });
 
-      expect(result).toMatchObject({ status: 301, location: `${url}/again` });
-      expect(seen).toHaveLength(4);
+  it('are not followed for a POST', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(307, { Location: '/b' }).end();
     });
 
-    it('are not followed for a POST', async () => {
-      const { url, seen } = await serve((_req, res) => {
-        res.writeHead(307, { Location: '/b' }).end();
-      });
+    const result = await request(
+      `${url}/a`,
+      { method: 'POST', body: 'a=1' },
+      { followRedirects: true },
+    );
 
-      const result = await request(
-        `${url}/a`,
-        { method: 'POST', body: 'a=1' },
-        { followRedirects: true },
-      );
+    expect(result.status).toBe(307);
+    expect(seen).toEqual(['POST /a']);
+  });
 
-      expect(result.status).toBe(307);
-      expect(seen).toEqual(['POST /a']);
+  it('are not followed without a usable location', async () => {
+    const { url, seen } = await serve((_req, res) => {
+      res.writeHead(302).end();
     });
 
-    it('are not followed without a usable location', async () => {
-      const { url, seen } = await serve((_req, res) => {
-        res.writeHead(302).end();
-      });
+    const result = await request(`${url}/a`, {}, { followRedirects: true });
 
-      const result = await request(`${url}/a`, {}, { followRedirects: true });
-
-      expect(result).toMatchObject({ status: 302 });
-      expect(result.location).toBeUndefined();
-      expect(seen).toHaveLength(1);
-    });
+    expect(result).toMatchObject({ status: 302 });
+    expect(result.location).toBeUndefined();
+    expect(seen).toHaveLength(1);
   });
 });
 
@@ -673,15 +701,13 @@ describe('request with a mock agent', () => {
     expect(
       await request(URL_A, {}, { agent: via([[502, '<html>bad</html>']]) }),
     ).toMatchObject({ status: 502, ok: false, body: '<html>bad</html>' });
-    expect(
-      (await request(URL_A, {}, { agent: via([[200, '']]) })).body,
-    ).toBeUndefined();
+    const empty = await request(URL_A, {}, { agent: via([[200, '']]) });
+    expect(empty.body).toBeUndefined();
   });
 
   it('does not retry unless asked to', async () => {
-    expect(
-      (await request(URL_A, {}, { agent: via([[503, 'x']]) })).status,
-    ).toBe(503);
+    const result = await request(URL_A, {}, { agent: via([[503, 'x']]) });
+    expect(result.status).toBe(503);
   });
 
   it('returns the last response once the retries are used up', async () => {

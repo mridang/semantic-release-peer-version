@@ -1,3 +1,7 @@
+/**
+ * @file Tests for the redaction helpers.
+ */
+
 import { describe, expect, it } from '@jest/globals';
 // noinspection ES6PreferShortImport
 import { redactCredentials, redactSecrets } from '../../src/utils/redact.js';

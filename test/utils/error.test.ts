@@ -1,3 +1,7 @@
+/**
+ * @file Tests for the error helpers.
+ */
+
 import { describe, expect, it } from '@jest/globals';
 // noinspection ES6PreferShortImport
 import { codeOf, messageOf } from '../../src/utils/error.js';
@@ -15,7 +19,9 @@ describe('messageOf', () => {
 
   it('describes an error without a message by its code', () => {
     expect(
-      messageOf(Object.assign(new Error(''), { code: 'ECONNREFUSED' })),
+      messageOf(
+        Object.assign(new Error('x'), { code: 'ECONNREFUSED', message: '' }),
+      ),
     ).toBe('ECONNREFUSED');
   });
 
@@ -23,21 +29,38 @@ describe('messageOf', () => {
     const inner = Object.assign(new Error('connect ECONNREFUSED ::1:443'), {
       code: 'ECONNREFUSED',
     });
-    expect(messageOf(new AggregateError([inner, new Error('other')], ''))).toBe(
-      'connect ECONNREFUSED ::1:443',
-    );
+    expect(
+      messageOf(
+        Object.assign(
+          new AggregateError([inner, new Error('other')], 'aggregate'),
+          {
+            message: '',
+          },
+        ),
+      ),
+    ).toBe('connect ECONNREFUSED ::1:443');
   });
 
   it('prefers the code of an aggregate error over its inner errors', () => {
-    const error = Object.assign(new AggregateError([new Error('inner')], ''), {
-      code: 'ECONNREFUSED',
-    });
+    const error = Object.assign(
+      new AggregateError([new Error('inner')], 'aggregate'),
+      {
+        code: 'ECONNREFUSED',
+        message: '',
+      },
+    );
     expect(messageOf(error)).toBe('ECONNREFUSED');
   });
 
   it('falls back to the name of an error with nothing else to say', () => {
-    expect(messageOf(new AggregateError([], ''))).toBe('AggregateError');
-    expect(messageOf(new TypeError(''))).toBe('TypeError');
+    expect(
+      messageOf(
+        Object.assign(new AggregateError([], 'aggregate'), { message: '' }),
+      ),
+    ).toBe('AggregateError');
+    expect(messageOf(Object.assign(new TypeError('x'), { message: '' }))).toBe(
+      'TypeError',
+    );
   });
 
   it('recognises an error from another realm by its shape', () => {

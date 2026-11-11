@@ -1,7 +1,12 @@
+/**
+ * @file The semantic-release configuration, which publishes the package and its tarball.
+ */
+
 import { readFileSync } from 'node:fs';
 
 const packageJson = JSON.parse(
-  readFileSync(new URL('package.json', import.meta.url), 'utf-8'),
+  // eslint-disable-next-line n/no-sync -- sync is fine in a script/bootstrap
+  readFileSync(new URL('package.json', import.meta.url), 'utf8'),
 );
 
 export default {

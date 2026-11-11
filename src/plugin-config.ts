@@ -1,3 +1,7 @@
+/**
+ * @file The plugin configuration and the checks on the repo option.
+ */
+
 import SemanticReleaseError from '@semantic-release/error';
 
 /**
@@ -29,6 +33,10 @@ export interface PluginConfig {
  * @param config - The plugin configuration.
  * @returns The `commitAnalyzerConfig` option, or undefined when it is missing
  * or empty.
+ * @example
+ * ```ts
+ * customCommitAnalyzerConfig({ repo: 'o/r', commitAnalyzerConfig: { preset: 'angular' } }); // { preset: 'angular' }
+ * ```
  */
 export function customCommitAnalyzerConfig(
   config: PluginConfig,
@@ -48,6 +56,11 @@ const REPO_PATTERN = /^(?!\.+\/)[\w.-]+\/(?!\.+$)[\w.-]+$/;
  * Check the `repo` option before it is put into a URL path.
  * @param repo - The `repo` option.
  * @throws {SemanticReleaseError} If it is missing, or is not `owner/name`.
+ * @example
+ * ```ts
+ * assertRepo('cli/cli'); // passes
+ * assertRepo('cli/cli/extra'); // throws EINVALIDREPO
+ * ```
  */
 export function assertRepo(repo: unknown): asserts repo is string {
   if (!repo) {
