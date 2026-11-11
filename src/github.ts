@@ -426,7 +426,6 @@ export interface RequestOptions {
   readonly followRedirects?: boolean;
 }
 
-
 /**
  * Perform a request and decode a JSON (or fall back to text) response.
  *
@@ -734,7 +733,6 @@ export class GitHubClient {
     this.token = options.token;
     this.agent = options.agent;
   }
-
 
   /**
    * List the tag names of up to the latest 100 releases of a repository,

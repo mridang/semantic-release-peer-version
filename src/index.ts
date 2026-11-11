@@ -22,7 +22,6 @@ export type { PluginConfig } from './plugin-config.js';
 
 const require = createRequire(import.meta.url);
 
-
 /**
  * Fetches up to the last 100 releases of the repository and returns the tag
  * of the highest semantic version among them (for example "v1.2.3" or
@@ -107,7 +106,6 @@ function analyzerConfigOf(
     config: require.resolve('conventional-changelog-conventionalcommits'),
   };
 }
-
 
 /**
  * Semantic-release `analyzeCommits` step. Delegates to the standard commit
