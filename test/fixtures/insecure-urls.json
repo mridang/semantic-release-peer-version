@@ -1,0 +1,6 @@
+{
+  "proxyWithCredentials": "http://user:PW-SECRET@bad host:3128",
+  "tunnelledTarget": "http://something.invalid/a",
+  "downgradeLocation": "http://x.test/b?access=1",
+  "downgradeLocationShown": "http://x.test/b"
+}

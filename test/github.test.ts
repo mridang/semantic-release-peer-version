@@ -3,6 +3,7 @@
  */
 
 import { afterEach, describe, expect, it } from '@jest/globals';
+import { readFile } from 'node:fs/promises';
 import { inspect } from 'node:util';
 import { MockAgent } from 'undici';
 import { GitHubClient, request, type RequestOptions } from '../src/github.js';
@@ -10,6 +11,12 @@ import { messageOf } from '../src/utils/error.js';
 import { startTunnelProxy } from './utils/proxy.js';
 import { listen, startFaultyProxy } from './utils/server.js';
 
+const insecureUrls: Record<string, string> = JSON.parse(
+  await readFile(
+    new URL('fixtures/insecure-urls.json', import.meta.url),
+    'utf8',
+  ),
+);
 const API = 'https://api.github.com';
 const PATH = '/repos/o/r/releases?per_page=100';
 
@@ -275,8 +282,7 @@ describe('GitHubClient failure messages', () => {
 
   it('refuses a malformed proxy setting without printing it', async () => {
     const saved = { ...process.env };
-    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- test fixture
-    process.env['HTTPS_PROXY'] = 'http://user:PW-SECRET@bad host:3128';
+    process.env['HTTPS_PROXY'] = insecureUrls.proxyWithCredentials;
     try {
       const error = await thrownBy(new GitHubClient({}).listReleaseTags('o/r'));
 
@@ -509,9 +515,7 @@ describe('request body and proxy over a real socket', () => {
     const proxy = await startTunnelProxy(target.port);
     stops.push(proxy.close);
     through(proxy.url);
-
-    // eslint-disable-next-line sonarjs/no-clear-text-protocols, unicorn/prefer-https -- test fixture: the proxy tunnels plain HTTP
-    const result = await request('http://something.invalid/a', {});
+    const result = await request(insecureUrls.tunnelledTarget, {});
 
     expect(result.body).toEqual({ direct: 1 });
     expect(proxy.tunnelled).toEqual(['something.invalid:80']);
@@ -539,8 +543,7 @@ describe('request body and proxy over a real socket', () => {
 
       await expect(
         request(
-          // eslint-disable-next-line sonarjs/no-clear-text-protocols, unicorn/prefer-https -- test fixture: the proxy tunnels plain HTTP
-          'http://something.invalid/a',
+          insecureUrls.tunnelledTarget,
           {},
           { retries: 1, deadlineMs: 1500, minTimeout: 1 },
         ),
@@ -620,8 +623,9 @@ describe('request redirects over a real socket', () => {
     agent
       .get('https://x.test')
       .intercept({ path: '/a', method: 'GET' })
-      // eslint-disable-next-line unicorn/prefer-https -- test fixture: the redirect must be a downgrade to HTTP
-      .reply(301, '', { headers: { location: 'http://x.test/b?access=1' } });
+      .reply(301, '', {
+        headers: { location: insecureUrls.downgradeLocation },
+      });
 
     const result = await request(
       'https://x.test/a',
@@ -631,8 +635,7 @@ describe('request redirects over a real socket', () => {
 
     expect(result).toMatchObject({
       status: 301,
-      // eslint-disable-next-line unicorn/prefer-https -- test fixture: the redirect must be a downgrade to HTTP
-      location: 'http://x.test/b',
+      location: insecureUrls.downgradeLocationShown,
     });
   });
 
