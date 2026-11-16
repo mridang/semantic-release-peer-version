@@ -46,12 +46,12 @@ const OTHER_SIDE_CLOSED = /other side closed/;
 /** A request to a host that does not resolve. */
 const NETWORK_ERROR_INVALID_HOST = /Network error calling something\.invalid/;
 
-const insecureUrls: Record<string, string> = JSON.parse(
+const insecureUrls = JSON.parse(
   await readFile(
     new URL('fixtures/insecure-urls.json', import.meta.url),
     'utf8',
   ),
-);
+) as Record<string, string>;
 const API = 'https://api.github.com';
 const PATH = '/repos/o/r/releases?per_page=100';
 
@@ -142,7 +142,7 @@ describe('GitHubClient.listReleaseTags', () => {
 
     await new GitHubClient({ token: 'TOKEN', agent }).listReleaseTags('o/r');
 
-    expect(seen[0]?.['authorization']).toBe('Bearer TOKEN');
+    expect(seen[0]?.authorization).toBe('Bearer TOKEN');
   });
 
   it.each([
@@ -315,7 +315,7 @@ describe('GitHubClient failure messages', () => {
 
   it('refuses a malformed proxy setting without printing it', async () => {
     const saved = { ...process.env };
-    process.env['HTTPS_PROXY'] = insecureUrls.proxyWithCredentials;
+    process.env.HTTPS_PROXY = insecureUrls.proxyWithCredentials;
     try {
       const error = await thrownBy(new GitHubClient({}).listReleaseTags('o/r'));
 
@@ -345,15 +345,15 @@ const serve = async (
 };
 
 const through = (proxyUrl: string, noProxy = ''): void => {
-  process.env['HTTP_PROXY'] = proxyUrl;
-  process.env['NO_PROXY'] = noProxy;
-  delete process.env['http_proxy'];
-  delete process.env['no_proxy'];
+  process.env.HTTP_PROXY = proxyUrl;
+  process.env.NO_PROXY = noProxy;
+  delete process.env.http_proxy;
+  delete process.env.no_proxy;
 };
 
 afterEach(async () => {
   process.env = { ...saved };
-  await Promise.all(stops.splice(0).map((stop) => stop()));
+  await Promise.all(stops.splice(0).map(async (stop) => stop()));
 });
 
 const fast: RequestOptions = { minTimeout: 1 };
@@ -640,7 +640,7 @@ describe('request redirects over a real socket', () => {
   it('are followed on the same origin when asked for, credentials included', async () => {
     const headers: unknown[] = [];
     const { url, seen } = await serve((req, res) => {
-      headers.push(req.headers['authorization']);
+      headers.push(req.headers.authorization);
       if (seen.length === 1) {
         res.writeHead(301, { Location: '/b?x=1' }).end();
         return;

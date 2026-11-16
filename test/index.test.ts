@@ -26,7 +26,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-const token = process.env['GITHUB_TOKEN'];
+const token = process.env.GITHUB_TOKEN;
 
 /**
  * How many more requests GitHub will accept from this machine. The rate limit
@@ -42,9 +42,9 @@ const remainingRequests = async (): Promise<number> => {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   }).catch(() => undefined);
   const body: unknown = await response?.json().catch(() => undefined);
-  const resources = isRecord(body) ? body['resources'] : undefined;
-  const core = isRecord(resources) ? resources['core'] : undefined;
-  const remaining = isRecord(core) ? core['remaining'] : undefined;
+  const resources = isRecord(body) ? body.resources : undefined;
+  const core = isRecord(resources) ? resources.core : undefined;
+  const remaining = isRecord(core) ? core.remaining : undefined;
   return typeof remaining === 'number' ? remaining : 0;
 };
 
