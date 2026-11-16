@@ -5,6 +5,7 @@
 import { createRequire } from 'node:module';
 import SemanticReleaseError from '@semantic-release/error';
 import { analyzeCommits as commitAnalyser } from '@semantic-release/commit-analyzer';
+// eslint-disable-next-line e18e/ban-dependencies -- semver is the parser that matches npm's version semantics; verkit is not a drop-in replacement
 import semver from 'semver';
 import type {
   AnalyzeCommitsContext,
