@@ -25,7 +25,11 @@ describe('stringAt', () => {
   });
 
   it('ignores inherited properties', () => {
-    expect(stringAt(Object.create({ s: 'inherited' }), 's')).toBeUndefined();
+    const inherited = Object.setPrototypeOf({}, { s: 'inherited' }) as Record<
+      string,
+      unknown
+    >;
+    expect(stringAt(inherited, 's')).toBeUndefined();
   });
 
   it('gives undefined for a missing property or the wrong type', () => {
@@ -45,6 +49,10 @@ describe('numberAt', () => {
   it('gives undefined for a missing property, the wrong type or an inherited one', () => {
     expect(numberAt(record, 's')).toBeUndefined();
     expect(numberAt(record, 'missing')).toBeUndefined();
-    expect(numberAt(Object.create({ n: 1 }), 'n')).toBeUndefined();
+    const inherited = Object.setPrototypeOf({}, { n: 1 }) as Record<
+      string,
+      unknown
+    >;
+    expect(numberAt(inherited, 'n')).toBeUndefined();
   });
 });

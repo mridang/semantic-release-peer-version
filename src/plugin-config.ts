@@ -40,9 +40,14 @@ export interface PluginConfig {
  */
 export function customCommitAnalyzerConfig(
   config: PluginConfig,
-): NonNullable<unknown> | undefined {
+): object | string | undefined {
   const { commitAnalyzerConfig } = config;
-  return commitAnalyzerConfig && Object.keys(commitAnalyzerConfig).length > 0
+  if (typeof commitAnalyzerConfig === 'string') {
+    return commitAnalyzerConfig === '' ? undefined : commitAnalyzerConfig;
+  }
+  return typeof commitAnalyzerConfig === 'object' &&
+    commitAnalyzerConfig !== null &&
+    Object.keys(commitAnalyzerConfig).length > 0
     ? commitAnalyzerConfig
     : undefined;
 }

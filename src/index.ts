@@ -94,7 +94,7 @@ export async function verifyConditions(
 function analyzerConfigOf(
   config: PluginConfig,
   logger: BaseContext['logger'],
-): NonNullable<unknown> {
+): object | string {
   const custom = customCommitAnalyzerConfig(config);
   if (custom !== undefined) {
     logger.log('Using provided commitAnalyzerConfig for base analyzer.');
