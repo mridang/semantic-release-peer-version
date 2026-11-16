@@ -11,6 +11,41 @@ import { messageOf } from '../src/utils/error.js';
 import { startTunnelProxy } from './utils/proxy.js';
 import { listen, startFaultyProxy } from './utils/server.js';
 
+/** The message for a repository that is missing or private. */
+const REPO_NOT_FOUND_MESSAGE = /The repository was not found or it is private/;
+/** The message for a token without repository scope. */
+const MISSING_REPO_SCOPE = /does not have 'repo' scope access to it/;
+/** The message for rejected credentials. */
+const AUTH_FAILED_MESSAGE = /Authentication failed/;
+/** The message for a forbidden request made with a token. */
+const FORBIDDEN_WITH_TOKEN =
+  /Access forbidden. The provided GitHub token might lack/;
+/** The message for a forbidden request made without a token. */
+const FORBIDDEN_WITHOUT_TOKEN =
+  /Access forbidden. No GitHub token was provided/;
+/** The advice shown when throttled without a token. */
+const THROTTLED_WITHOUT_TOKEN = /throttling.*Providing a GitHub token/;
+/** The advice shown when throttled with a token. */
+const THROTTLED_RETRY_LATER = /throttling.*Try again later/;
+/** The advice shown for an unknown repository. */
+const CHECK_REPOSITORY_URL = /Please check repository URL/;
+/** The message for a response that is not the expected shape. */
+const INVALID_RESPONSE_FORMAT =
+  /^Invalid response format received from GitHub API when fetching releases for o\/r\./;
+/** The suffix that quotes GitHub's own rate limit message. */
+const RATE_LIMIT_SAID =
+  /GitHub said: API rate limit exceeded for 1\.2\.3\.4\.$/;
+/** The message for a failed call to the GitHub API. */
+const NETWORK_ERROR_GITHUB = /^Network error calling api\.github\.com/;
+/** A loopback connection failure, as the network layer reports it. */
+const NETWORK_ERROR_LOOPBACK = /Network error calling 127\.0\.0\.1/;
+/** A request that ran past its deadline. */
+const TIMEOUT_MESSAGE = /aborted due to timeout/;
+/** A connection the peer closed before the response. */
+const OTHER_SIDE_CLOSED = /other side closed/;
+/** A request to a host that does not resolve. */
+const NETWORK_ERROR_INVALID_HOST = /Network error calling something\.invalid/;
+
 const insecureUrls: Record<string, string> = JSON.parse(
   await readFile(
     new URL('fixtures/insecure-urls.json', import.meta.url),
@@ -43,7 +78,7 @@ const mockReleases = (
   agent.disableNetConnect();
   const seen: Record<string, unknown>[] = [];
   const pool = agent.get(API);
-  replies.forEach((reply, index) => {
+  for (const [index, reply] of replies.entries()) {
     const scope = pool
       .intercept({ path: PATH, method: 'GET' })
       .reply((options) => {
@@ -62,7 +97,7 @@ const mockReleases = (
     } else {
       scope.times(1);
     }
-  });
+  }
   return { agent, seen };
 };
 
@@ -111,11 +146,11 @@ describe('GitHubClient.listReleaseTags', () => {
   });
 
   it.each([
-    [404, undefined, /The repository was not found or it is private/],
-    [404, 'TOKEN', /does not have 'repo' scope access to it/],
-    [401, 'TOKEN', /Authentication failed/],
-    [403, 'TOKEN', /Access forbidden. The provided GitHub token might lack/],
-    [403, undefined, /Access forbidden. No GitHub token was provided/],
+    [404, undefined, REPO_NOT_FOUND_MESSAGE],
+    [404, 'TOKEN', MISSING_REPO_SCOPE],
+    [401, 'TOKEN', AUTH_FAILED_MESSAGE],
+    [403, 'TOKEN', FORBIDDEN_WITH_TOKEN],
+    [403, undefined, FORBIDDEN_WITHOUT_TOKEN],
   ])('explains HTTP %s (token: %s)', async (status, token, message) => {
     const { agent } = mockReleases({ status, body: {} });
 
@@ -145,9 +180,9 @@ describe('GitHubClient.listReleaseTags', () => {
     );
 
     expect(texts.map((t) => t.calls)).toEqual([4, 4, 4]);
-    expect(texts[0]?.text).toMatch(/throttling.*Providing a GitHub token/);
-    expect(texts[1]?.text).toMatch(/throttling.*Try again later/);
-    expect(texts[2]?.text).toMatch(/Please check repository URL/);
+    expect(texts[0]?.text).toMatch(THROTTLED_WITHOUT_TOKEN);
+    expect(texts[1]?.text).toMatch(THROTTLED_RETRY_LATER);
+    expect(texts[2]?.text).toMatch(CHECK_REPOSITORY_URL);
   }, 20_000);
 
   it.each([
@@ -161,7 +196,7 @@ describe('GitHubClient.listReleaseTags', () => {
     const { agent } = mockReleases({ body });
 
     expect(await failure(new GitHubClient({ agent }))).toMatch(
-      /^Invalid response format received from GitHub API when fetching releases for o\/r\./,
+      INVALID_RESPONSE_FORMAT,
     );
   });
 
@@ -209,9 +244,7 @@ describe('GitHubClient failure messages', () => {
 
     expect(text).toContain('No GitHub token was provided');
     expect(text).not.toContain('might lack required scopes');
-    expect(text).toMatch(
-      /GitHub said: API rate limit exceeded for 1\.2\.3\.4\.$/,
-    );
+    expect(text).toMatch(RATE_LIMIT_SAID);
   });
 
   it('does not suggest a token when one was used', async () => {
@@ -257,7 +290,7 @@ describe('GitHubClient failure messages', () => {
 
     const text = await failure(client);
 
-    expect(text).toMatch(/^Network error calling api\.github\.com/);
+    expect(text).toMatch(NETWORK_ERROR_GITHUB);
     expect(text).not.toContain('SEC RET');
   });
 
@@ -406,7 +439,7 @@ describe('request over a real socket', () => {
       const timer: ReturnType<typeof setTimeout> = realSet(
         (...args: unknown[]) => {
           pending.delete(timer);
-          handler.apply(undefined, args as []);
+          handler(...(args as []));
         },
         ms,
         ...rest,
@@ -429,7 +462,7 @@ describe('request over a real socket', () => {
 
       await expect(
         request(`${url}/a`, {}, { retries: 10, deadlineMs: 400 }),
-      ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
+      ).rejects.toThrow(NETWORK_ERROR_LOOPBACK);
 
       expect(pending.size).toBe(0);
     } finally {
@@ -464,7 +497,7 @@ describe('request over a real socket', () => {
         {},
         { retries: 1, attemptTimeoutMs: 1000, minTimeout: 1 },
       ),
-    ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
+    ).rejects.toThrow(NETWORK_ERROR_LOOPBACK);
     expect(seen).toHaveLength(2);
   }, 15_000);
 
@@ -473,7 +506,7 @@ describe('request over a real socket', () => {
     const started = Date.now();
 
     await expect(request(`${url}/a`, {}, { deadlineMs: 1000 })).rejects.toThrow(
-      /aborted due to timeout/,
+      TIMEOUT_MESSAGE,
     );
     expect(Date.now() - started).toBeLessThan(2000);
   }, 15_000);
@@ -487,7 +520,7 @@ describe('request over a real socket', () => {
 
     await expect(
       request(`${url}/a`, {}, { retries: 2, minTimeout: 1 }),
-    ).rejects.toThrow(/other side closed/);
+    ).rejects.toThrow(OTHER_SIDE_CLOSED);
     expect(seen).toEqual(['GET /a', 'GET /a', 'GET /a']);
   }, 15_000);
 });
@@ -518,7 +551,7 @@ describe('request body and proxy over a real socket', () => {
 
     await expect(
       request(`${url}/a`, {}, { retries: 2, minTimeout: 1 }),
-    ).rejects.toThrow(/Network error calling 127\.0\.0\.1/);
+    ).rejects.toThrow(NETWORK_ERROR_LOOPBACK);
     expect(seen).toHaveLength(1);
   });
 
@@ -575,7 +608,7 @@ describe('request body and proxy over a real socket', () => {
           {},
           { retries: 1, deadlineMs: 1500, minTimeout: 1 },
         ),
-      ).rejects.toThrow(/Network error calling something\.invalid/);
+      ).rejects.toThrow(NETWORK_ERROR_INVALID_HOST);
 
       expect(Date.now() - started).toBeLessThan(4000);
       const connects = proxy.connects();
@@ -712,7 +745,7 @@ describe('request with a mock agent', () => {
     const agent = new MockAgent();
     agent.disableNetConnect();
     const pool = agent.get('https://x.test');
-    replies.forEach(([status, data], index) => {
+    for (const [index, [status, data]] of replies.entries()) {
       const scope = pool
         .intercept({ path: '/a', method: 'GET' })
         .reply(status, data);
@@ -721,7 +754,7 @@ describe('request with a mock agent', () => {
       } else {
         scope.times(1);
       }
-    });
+    }
     return agent;
   };
 

@@ -3,6 +3,7 @@
  */
 
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
+// eslint-disable-next-line e18e/ban-dependencies -- the tests use the same semver parser as the plugin; verkit is not a drop-in replacement
 import semver from 'semver';
 import { isRecord, stringAt } from '../src/utils/object.js';
 // noinspection ES6PreferShortImport
@@ -10,6 +11,14 @@ import plugin, { analyzeCommits, verifyConditions } from '../src/index.js';
 import { GitHubClient } from '../src/github.js';
 import { commit, stepContext, type AnalyzeContext } from './utils/context.js';
 import type { VerifyConditionsContext } from 'semantic-release';
+
+/** The message for a major release that has no matching tag. */
+const BLOCKED_NEXT_MAJOR = /Blocked: next major/;
+/** The message when no release tag is valid semver. */
+const NO_VALID_TAGS = /No valid semver release tags/;
+/** The log line that names the default commit preset. */
+const DEFAULT_PRESET_NOTICE =
+  /defaulting to \{ preset: "conventionalcommits" \}/;
 
 jest.setTimeout(30_000);
 
@@ -87,7 +96,7 @@ integration('Integration: block-major plugin hooks', () => {
 
     await expect(
       analyzeCommits({ repo: 'cli/cli', githubToken: token }, context),
-    ).rejects.toThrow(/Blocked: next major/);
+    ).rejects.toThrow(BLOCKED_NEXT_MAJOR);
   });
 
   it('analyzeCommits() passes through non-major bump', async () => {
@@ -153,7 +162,7 @@ describe('plugin steps with the GitHub client stubbed', () => {
 
       await expect(
         verifyConditions({ repo: 'o/r' }, make().context),
-      ).rejects.toThrow(/No valid semver release tags/);
+      ).rejects.toThrow(NO_VALID_TAGS);
     });
   });
 
@@ -278,9 +287,7 @@ describe('plugin steps with the GitHub client stubbed', () => {
         );
 
         expect(result).toBe('major');
-        expect(lines[0]).toMatch(
-          /defaulting to \{ preset: "conventionalcommits" \}/,
-        );
+        expect(lines[0]).toMatch(DEFAULT_PRESET_NOTICE);
       },
     );
   });

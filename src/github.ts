@@ -15,6 +15,9 @@ import { isRecord, numberAt, stringAt } from './utils/object.js';
 import { redactCredentials, redactSecrets } from './utils/redact.js';
 import { truncate } from './utils/text.js';
 
+/** Matches a GitHub message about the rate limit, in any case. */
+const RATE_LIMIT_PATTERN = /rate limit/i;
+
 /**
  * What a call came back with, with the body already read.
  */
@@ -529,12 +532,14 @@ export async function request(
       body: init.body,
       signal: deadline,
     });
-    const text = await response.body.text().catch((error: unknown) => {
-      if (codeOf(error) === BODY_PHASE_CODE && left > 0) {
-        return undefined;
-      }
-      throw error;
-    });
+    const text = await response.body
+      .text()
+      .catch((error: unknown): string | undefined => {
+        if (codeOf(error) === BODY_PHASE_CODE && left > 0) {
+          return undefined;
+        }
+        throw error;
+      });
     if (text === undefined) {
       return exchange(left - 1, where, hops);
     }
@@ -688,7 +693,7 @@ function errorFor(
   const prefix = `Failed to fetch releases from ${repo} (${result.status}).`;
   const reason = reasonFor(
     result.status,
-    said !== undefined && /rate limit/i.test(said),
+    said !== undefined && RATE_LIMIT_PATTERN.test(said),
     hasToken,
   );
   return new SemanticReleaseError(

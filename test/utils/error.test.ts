@@ -14,7 +14,7 @@ describe('messageOf', () => {
   it('uses the string form of anything else', () => {
     expect(messageOf('plain')).toBe('plain');
     expect(messageOf(42)).toBe('42');
-    expect(messageOf(undefined)).toBe('undefined');
+    expect(messageOf()).toBe('undefined');
   });
 
   it('describes an error without a message by its code', () => {
@@ -83,6 +83,6 @@ describe('codeOf', () => {
     expect(codeOf(new Error('x'))).toBeUndefined();
     expect(codeOf(Object.assign(new Error('x'), { code: 5 }))).toBeUndefined();
     expect(codeOf('E1')).toBeUndefined();
-    expect(codeOf(undefined)).toBeUndefined();
+    expect(codeOf()).toBeUndefined();
   });
 });
