@@ -55,7 +55,7 @@ export function customCommitAnalyzerConfig(
 /**
  * An `owner/name` pair: no path tricks, no query, no dot-only segments.
  */
-const REPO_PATTERN = /^(?!\.+\/)[\w.-]+\/(?!\.+$)[\w.-]+$/;
+const REPO_PATTERN = /^(?!\.+\/)[\w.-]+\/(?!\.+$)[\w.-]+$/u;
 
 /**
  * Check the `repo` option before it is put into a URL path.

@@ -9,16 +9,19 @@ import { isRecord, stringAt } from '../src/utils/object.js';
 // noinspection ES6PreferShortImport
 import plugin, { analyzeCommits, verifyConditions } from '../src/index.js';
 import { GitHubClient } from '../src/github.js';
-import { commit, stepContext, type AnalyzeContext } from './utils/context.js';
-import type { VerifyConditionsContext } from 'semantic-release';
+import { commit, stepContext } from './utils/context.js';
+import type {
+  AnalyzeCommitsContext,
+  VerifyConditionsContext,
+} from 'semantic-release';
 
 /** The message for a major release that has no matching tag. */
-const BLOCKED_NEXT_MAJOR = /Blocked: next major/;
+const BLOCKED_NEXT_MAJOR = /Blocked: next major/u;
 /** The message when no release tag is valid semver. */
-const NO_VALID_TAGS = /No valid semver release tags/;
+const NO_VALID_TAGS = /No valid semver release tags/u;
 /** The log line that names the default commit preset. */
 const DEFAULT_PRESET_NOTICE =
-  /defaulting to \{ preset: "conventionalcommits" \}/;
+  /defaulting to \{ preset: "conventionalcommits" \}/u;
 
 jest.setTimeout(30_000);
 
@@ -78,7 +81,7 @@ integration('Integration: block-major plugin hooks', () => {
   });
 
   it('analyzeCommits() yields "major" for a breaking change when under cap', async () => {
-    const { context } = stepContext<AnalyzeContext>({
+    const { context } = stepContext<AnalyzeCommitsContext>({
       lastRelease: { version: '1.2.3' },
       commits: [commit('feat!: this is breaking')],
     });
@@ -89,7 +92,7 @@ integration('Integration: block-major plugin hooks', () => {
   });
 
   it('analyzeCommits() blocks a major bump if cap is too low', async () => {
-    const { context } = stepContext<AnalyzeContext>({
+    const { context } = stepContext<AnalyzeCommitsContext>({
       lastRelease: { version: '2.0.0' },
       commits: [commit('feat!: another break')],
     });
@@ -100,7 +103,7 @@ integration('Integration: block-major plugin hooks', () => {
   });
 
   it('analyzeCommits() passes through non-major bump', async () => {
-    const { context } = stepContext<AnalyzeContext>({
+    const { context } = stepContext<AnalyzeCommitsContext>({
       lastRelease: { version: '3.0.0' },
       commits: [commit('fix: update README')],
     });
@@ -168,8 +171,14 @@ describe('plugin steps with the GitHub client stubbed', () => {
 
   describe('analyzeCommits', () => {
     const defaultRelease = { version: '1.0.0' };
-    const make = (header: string, lastRelease: object = defaultRelease) =>
-      stepContext<AnalyzeContext>({ lastRelease, commits: [commit(header)] });
+    const make = (
+      header: string,
+      lastRelease: Readonly<Record<string, unknown>> = defaultRelease,
+    ) =>
+      stepContext<AnalyzeCommitsContext>({
+        lastRelease,
+        commits: [commit(header)],
+      });
 
     it('requires a valid repo even when no major bump is checked', async () => {
       const { context } = make('chore: tidy');

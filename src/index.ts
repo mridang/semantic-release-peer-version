@@ -7,17 +7,14 @@ import SemanticReleaseError from '@semantic-release/error';
 import { analyzeCommits as commitAnalyser } from '@semantic-release/commit-analyzer';
 // eslint-disable-next-line e18e/ban-dependencies -- semver is the parser that matches npm's version semantics; verkit is not a drop-in replacement
 import semver from 'semver';
+import { GitHubClient } from './github.js';
+import { assertRepo, customCommitAnalyzerConfig } from './plugin-config.js';
+import type { PluginConfig } from './plugin-config.js';
 import type {
   AnalyzeCommitsContext,
   BaseContext,
   VerifyConditionsContext,
 } from 'semantic-release';
-import { GitHubClient } from './github.js';
-import {
-  assertRepo,
-  customCommitAnalyzerConfig,
-  type PluginConfig,
-} from './plugin-config.js';
 
 export type { PluginConfig } from './plugin-config.js';
 
