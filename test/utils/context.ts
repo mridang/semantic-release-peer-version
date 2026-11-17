@@ -3,33 +3,41 @@
  */
 
 import { recordingLogger } from './logger.js';
-import type { VerifyConditionsContext } from 'semantic-release';
+import type { AnalyzeContext } from '@semantic-release/commit-analyzer';
 
 /**
  * Build a semantic-release context for a step. The real context carries far
- * more than the plugin reads, so the fields the plugin uses are filled in and
- * the rest is left out; this is the one place the test suite does that.
- * @template T - The context type of the step under test.
+ * more than the plugin reads, so the fields the plugin uses are filled in with
+ * an empty `lastRelease`, as semantic-release has before the first release;
+ * this is the one place the test suite declares the result to be the library's
+ * context, which every step accepts.
  * @param extra - Properties to add or override.
  * @returns The context and the lines logged through it.
  * @example
  * ```ts
- * const { context, lines } = stepContext<VerifyConditionsContext>({ lastRelease: { version: '1.0.0' } });
+ * const { context, lines } = stepContext({ lastRelease: { version: '1.0.0' } });
  * ```
  */
-export function stepContext<T extends VerifyConditionsContext>(
-  extra: Readonly<Record<string, unknown>> = {},
-) {
+export function stepContext(extra: Readonly<Record<string, unknown>> = {}) {
   const { logger, lines } = recordingLogger();
-  const context = {
-    logger,
-    cwd: process.cwd(),
-    env: {},
-    commits: [],
-    lastRelease: {},
-    ...extra,
+  return {
+    context: {
+      logger,
+      cwd: process.cwd(),
+      env: {},
+      commits: [],
+      releases: [],
+      lastRelease: {},
+      stdout: process.stdout,
+      stderr: process.stderr,
+      envCi: { isCi: false, commit: 'abc1234', branch: 'main' },
+      branch: { name: 'main' },
+      branches: [],
+      options: {},
+      ...extra,
+    } as AnalyzeContext,
+    lines,
   };
-  return { context: context as unknown as T, lines };
 }
 
 /**

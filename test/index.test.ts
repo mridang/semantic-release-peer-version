@@ -10,10 +10,6 @@ import { isRecord, stringAt } from '../src/utils/object.js';
 import plugin, { analyzeCommits, verifyConditions } from '../src/index.js';
 import { GitHubClient } from '../src/github.js';
 import { commit, stepContext } from './utils/context.js';
-import type {
-  AnalyzeCommitsContext,
-  VerifyConditionsContext,
-} from 'semantic-release';
 
 /** The message for a major release that has no matching tag. */
 const BLOCKED_NEXT_MAJOR = /Blocked: next major/u;
@@ -62,7 +58,7 @@ const integration = remaining >= 10 ? describe : describe.skip;
 
 integration('Integration: block-major plugin hooks', () => {
   it('verifyConditions() reads the real latest semver tag', async () => {
-    const { context, lines } = stepContext<VerifyConditionsContext>();
+    const { context, lines } = stepContext();
 
     await verifyConditions({ repo: 'cli/cli', githubToken: token }, context);
     const res = await fetch(
@@ -81,7 +77,7 @@ integration('Integration: block-major plugin hooks', () => {
   });
 
   it('analyzeCommits() yields "major" for a breaking change when under cap', async () => {
-    const { context } = stepContext<AnalyzeCommitsContext>({
+    const { context } = stepContext({
       lastRelease: { version: '1.2.3' },
       commits: [commit('feat!: this is breaking')],
     });
@@ -92,7 +88,7 @@ integration('Integration: block-major plugin hooks', () => {
   });
 
   it('analyzeCommits() blocks a major bump if cap is too low', async () => {
-    const { context } = stepContext<AnalyzeCommitsContext>({
+    const { context } = stepContext({
       lastRelease: { version: '2.0.0' },
       commits: [commit('feat!: another break')],
     });
@@ -103,7 +99,7 @@ integration('Integration: block-major plugin hooks', () => {
   });
 
   it('analyzeCommits() passes through non-major bump', async () => {
-    const { context } = stepContext<AnalyzeCommitsContext>({
+    const { context } = stepContext({
       lastRelease: { version: '3.0.0' },
       commits: [commit('fix: update README')],
     });
@@ -125,7 +121,7 @@ describe('plugin steps with the GitHub client stubbed', () => {
   });
 
   describe('verifyConditions', () => {
-    const make = () => stepContext<VerifyConditionsContext>();
+    const make = () => stepContext();
 
     it('requires a repo', async () => {
       const { context } = make();
@@ -175,7 +171,7 @@ describe('plugin steps with the GitHub client stubbed', () => {
       header: string,
       lastRelease: Readonly<Record<string, unknown>> = defaultRelease,
     ) =>
-      stepContext<AnalyzeCommitsContext>({
+      stepContext({
         lastRelease,
         commits: [commit(header)],
       });

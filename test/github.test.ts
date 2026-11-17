@@ -4,10 +4,11 @@
 
 import { readFile } from 'node:fs/promises';
 import { inspect } from 'node:util';
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { MockAgent } from 'undici';
 import { GitHubClient, request } from '../src/github.js';
 import { messageOf } from '../src/utils/error.js';
+import { isRecord } from '../src/utils/object.js';
 import { startTunnelProxy } from './utils/proxy.js';
 import { listen, startFaultyProxy } from './utils/server.js';
 import type { RequestOptions } from '../src/github.js';
@@ -47,6 +48,7 @@ const OTHER_SIDE_CLOSED = /other side closed/u;
 /** A request to a host that does not resolve. */
 const NETWORK_ERROR_INVALID_HOST = /Network error calling something\.invalid/u;
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the checked-in fixture file is a flat map of strings and the repository has no schema library to validate it with
 const insecureUrls = JSON.parse(
   await readFile(
     new URL('fixtures/insecure-urls.json', import.meta.url),
@@ -81,7 +83,7 @@ const mockReleases = (...replies: readonly Reply[]) => {
     const scope = pool
       .intercept({ path: PATH, method: 'GET' })
       .reply((options) => {
-        seen.push({ ...(options.headers as Record<string, unknown>) });
+        seen.push(isRecord(options.headers) ? { ...options.headers } : {});
         return {
           statusCode: reply.status ?? 200,
           data:
@@ -167,16 +169,15 @@ describe('GitHubClient.listReleaseTags', () => {
   });
 
   it('explains throttling and server errors once the retries have run out', async () => {
+    const cases: readonly (readonly [number, string | undefined])[] = [
+      [429, undefined],
+      [429, 'TOKEN'],
+      [500, undefined],
+    ];
     const texts = await Promise.all(
-      [
-        [429, undefined],
-        [429, 'TOKEN'],
-        [500, undefined],
-      ].map(async ([status, token]) => {
-        const { agent, seen } = mockReleases({ status: Number(status) });
-        const text = await failure(
-          new GitHubClient({ token: token as string | undefined, agent }),
-        );
+      cases.map(async ([status, token]) => {
+        const { agent, seen } = mockReleases({ status });
+        const text = await failure(new GitHubClient({ token, agent }));
         return { text, calls: seen.length };
       }),
     );
@@ -435,30 +436,30 @@ describe('request over a real socket', () => {
     const pending = new Set<ReturnType<typeof setTimeout>>();
     const realSet = globalThis.setTimeout;
     const realClear = globalThis.clearTimeout;
-    globalThis.setTimeout = ((
-      handler: () => void,
-      ms?: number,
-      ...rest: unknown[]
-    ) => {
-      const timer: ReturnType<typeof setTimeout> = realSet(
-        (...args: unknown[]) => {
+    const setSpy = jest
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((handler, ms, ...rest) => {
+        const timer: ReturnType<typeof setTimeout> = realSet(
+          () => {
+            pending.delete(timer);
+            Reflect.apply(handler, undefined, rest);
+          },
+          ms,
+          ...rest,
+        );
+        if (ms === waitMs) {
+          pending.add(timer);
+        }
+        return timer;
+      });
+    const clearSpy = jest
+      .spyOn(globalThis, 'clearTimeout')
+      .mockImplementation((timer) => {
+        if (typeof timer === 'object') {
           pending.delete(timer);
-          handler(...(args as []));
-        },
-        ms,
-        ...rest,
-      );
-      if (ms === waitMs) {
-        pending.add(timer);
-      }
-      return timer;
-    }) as typeof setTimeout;
-    globalThis.clearTimeout = ((timer?: ReturnType<typeof setTimeout>) => {
-      if (timer !== undefined) {
-        pending.delete(timer);
-      }
-      realClear(timer);
-    }) as typeof clearTimeout;
+        }
+        realClear(timer);
+      });
     try {
       const { url } = await serve((_req, res) => {
         res.writeHead(503, { 'Retry-After': '3600' }).end('busy');
@@ -470,10 +471,8 @@ describe('request over a real socket', () => {
 
       expect(pending.size).toBe(0);
     } finally {
-      // eslint-disable-next-line require-atomic-updates -- restores the timers after the awaited work
-      globalThis.setTimeout = realSet;
-      // eslint-disable-next-line require-atomic-updates -- restores the timers after the awaited work
-      globalThis.clearTimeout = realClear;
+      setSpy.mockRestore();
+      clearSpy.mockRestore();
     }
   });
 

@@ -10,11 +10,8 @@ import semver from 'semver';
 import { GitHubClient } from './github.js';
 import { assertRepo, customCommitAnalyzerConfig } from './plugin-config.js';
 import type { PluginConfig } from './plugin-config.js';
-import type {
-  AnalyzeCommitsContext,
-  BaseContext,
-  VerifyConditionsContext,
-} from 'semantic-release';
+import type { AnalyzeContext } from '@semantic-release/commit-analyzer';
+import type { BaseContext, VerifyConditionsContext } from 'semantic-release';
 
 export type { PluginConfig } from './plugin-config.js';
 
@@ -123,7 +120,7 @@ function analyzerConfigOf(
  */
 export async function analyzeCommits(
   config: PluginConfig,
-  context: AnalyzeCommitsContext,
+  context: AnalyzeContext,
 ): Promise<string | null> {
   assertRepo(config.repo);
   const releaseType = await commitAnalyser(
