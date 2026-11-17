@@ -2,11 +2,8 @@
  * @file Builds semantic-release contexts and commits for the tests.
  */
 
-import type {
-  AnalyzeCommitsContext,
-  VerifyConditionsContext,
-} from 'semantic-release';
 import { recordingLogger } from './logger.js';
+import type { VerifyConditionsContext } from 'semantic-release';
 
 /**
  * Build a semantic-release context for a step. The real context carries far
@@ -22,9 +19,9 @@ import { recordingLogger } from './logger.js';
  */
 export function stepContext<T extends VerifyConditionsContext>(
   extra: Readonly<Record<string, unknown>> = {},
-): { context: T; lines: string[] } {
+) {
   const { logger, lines } = recordingLogger();
-  const context: unknown = {
+  const context = {
     logger,
     cwd: process.cwd(),
     env: {},
@@ -32,7 +29,7 @@ export function stepContext<T extends VerifyConditionsContext>(
     lastRelease: {},
     ...extra,
   };
-  return { context: context as T, lines };
+  return { context: context as unknown as T, lines };
 }
 
 /**
@@ -44,9 +41,7 @@ export function stepContext<T extends VerifyConditionsContext>(
  * commit('feat: add a flag'); // { header: 'feat: add a flag', message: 'feat: add a flag' }
  * ```
  */
-export const commit = (header: string): Readonly<Record<string, unknown>> => ({
+export const commit = (header: string) => ({
   header,
   message: header,
 });
-
-export type AnalyzeContext = AnalyzeCommitsContext;

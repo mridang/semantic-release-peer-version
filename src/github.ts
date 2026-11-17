@@ -3,20 +3,16 @@
  */
 
 import SemanticReleaseError from '@semantic-release/error';
-import {
-  EnvHttpProxyAgent,
-  RetryAgent,
-  request as send,
-  type Dispatcher,
-} from 'undici';
+import { EnvHttpProxyAgent, RetryAgent, request as send } from 'undici';
 import { assertRepo } from './plugin-config.js';
 import { codeOf, messageOf } from './utils/error.js';
 import { isRecord, numberAt, stringAt } from './utils/object.js';
 import { redactCredentials, redactSecrets } from './utils/redact.js';
 import { truncate } from './utils/text.js';
+import type { Dispatcher } from 'undici';
 
 /** Matches a GitHub message about the rate limit, in any case. */
-const RATE_LIMIT_PATTERN = /rate limit/i;
+const RATE_LIMIT_PATTERN = /rate limit/iu;
 
 /**
  * What a call came back with, with the body already read.
@@ -234,6 +230,15 @@ function markBodyFailures(
   };
 }
 
+/** A value that `JSON.parse` can produce. */
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
+
 /**
  * Decode a response body.
  * @param text - The body as text.
@@ -245,12 +250,12 @@ function markBodyFailures(
  * decodeBody('busy'); // 'busy'
  * ```
  */
-function decodeBody(text: string): unknown {
+function decodeBody(text: string): JsonValue | undefined {
   if (text === '') {
     return undefined;
   }
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as JsonValue;
   } catch {
     return text.slice(0, 500);
   }
@@ -562,7 +567,7 @@ export async function request(
       ...(location === undefined ? {} : { location }),
     };
   };
-  const expired = new Promise<never>((_resolve, reject) =>
+  const expired = new Promise<never>((_resolve, reject) => {
     deadline.addEventListener(
       'abort',
       () => {
@@ -572,8 +577,8 @@ export async function request(
         reject(deadline.reason);
       },
       { once: true, signal: finished.signal },
-    ),
-  );
+    );
+  });
   const attempt = exchange(retries, target, MAX_REDIRECTIONS);
   attempt.catch(() => undefined);
   try {

@@ -2,49 +2,50 @@
  * @file Tests for the GitHub client and the request helper.
  */
 
-import { afterEach, describe, expect, it } from '@jest/globals';
 import { readFile } from 'node:fs/promises';
 import { inspect } from 'node:util';
+import { afterEach, describe, expect, it } from '@jest/globals';
 import { MockAgent } from 'undici';
-import { GitHubClient, request, type RequestOptions } from '../src/github.js';
+import { GitHubClient, request } from '../src/github.js';
 import { messageOf } from '../src/utils/error.js';
 import { startTunnelProxy } from './utils/proxy.js';
 import { listen, startFaultyProxy } from './utils/server.js';
+import type { RequestOptions } from '../src/github.js';
 
 /** The message for a repository that is missing or private. */
-const REPO_NOT_FOUND_MESSAGE = /The repository was not found or it is private/;
+const REPO_NOT_FOUND_MESSAGE = /The repository was not found or it is private/u;
 /** The message for a token without repository scope. */
-const MISSING_REPO_SCOPE = /does not have 'repo' scope access to it/;
+const MISSING_REPO_SCOPE = /does not have 'repo' scope access to it/u;
 /** The message for rejected credentials. */
-const AUTH_FAILED_MESSAGE = /Authentication failed/;
+const AUTH_FAILED_MESSAGE = /Authentication failed/u;
 /** The message for a forbidden request made with a token. */
 const FORBIDDEN_WITH_TOKEN =
-  /Access forbidden. The provided GitHub token might lack/;
+  /Access forbidden. The provided GitHub token might lack/u;
 /** The message for a forbidden request made without a token. */
 const FORBIDDEN_WITHOUT_TOKEN =
-  /Access forbidden. No GitHub token was provided/;
+  /Access forbidden. No GitHub token was provided/u;
 /** The advice shown when throttled without a token. */
-const THROTTLED_WITHOUT_TOKEN = /throttling.*Providing a GitHub token/;
+const THROTTLED_WITHOUT_TOKEN = /throttling.*Providing a GitHub token/u;
 /** The advice shown when throttled with a token. */
-const THROTTLED_RETRY_LATER = /throttling.*Try again later/;
+const THROTTLED_RETRY_LATER = /throttling.*Try again later/u;
 /** The advice shown for an unknown repository. */
-const CHECK_REPOSITORY_URL = /Please check repository URL/;
+const CHECK_REPOSITORY_URL = /Please check repository URL/u;
 /** The message for a response that is not the expected shape. */
 const INVALID_RESPONSE_FORMAT =
-  /^Invalid response format received from GitHub API when fetching releases for o\/r\./;
+  /^Invalid response format received from GitHub API when fetching releases for o\/r\./u;
 /** The suffix that quotes GitHub's own rate limit message. */
 const RATE_LIMIT_SAID =
-  /GitHub said: API rate limit exceeded for 1\.2\.3\.4\.$/;
+  /GitHub said: API rate limit exceeded for 1\.2\.3\.4\.$/u;
 /** The message for a failed call to the GitHub API. */
-const NETWORK_ERROR_GITHUB = /^Network error calling api\.github\.com/;
+const NETWORK_ERROR_GITHUB = /^Network error calling api\.github\.com/u;
 /** A loopback connection failure, as the network layer reports it. */
-const NETWORK_ERROR_LOOPBACK = /Network error calling 127\.0\.0\.1/;
+const NETWORK_ERROR_LOOPBACK = /Network error calling 127\.0\.0\.1/u;
 /** A request that ran past its deadline. */
-const TIMEOUT_MESSAGE = /aborted due to timeout/;
+const TIMEOUT_MESSAGE = /aborted due to timeout/u;
 /** A connection the peer closed before the response. */
-const OTHER_SIDE_CLOSED = /other side closed/;
+const OTHER_SIDE_CLOSED = /other side closed/u;
 /** A request to a host that does not resolve. */
-const NETWORK_ERROR_INVALID_HOST = /Network error calling something\.invalid/;
+const NETWORK_ERROR_INVALID_HOST = /Network error calling something\.invalid/u;
 
 const insecureUrls = JSON.parse(
   await readFile(
@@ -71,9 +72,7 @@ interface Reply {
  * const { agent, seen } = mockReleases({ body: [{ tag_name: 'v1.0.0' }] });
  * ```
  */
-const mockReleases = (
-  ...replies: readonly Reply[]
-): { agent: MockAgent; seen: Record<string, unknown>[] } => {
+const mockReleases = (...replies: readonly Reply[]) => {
   const agent = new MockAgent();
   agent.disableNetConnect();
   const seen: Record<string, unknown>[] = [];
@@ -101,11 +100,13 @@ const mockReleases = (
   return { agent, seen };
 };
 
-const thrownBy = async (promise: Promise<unknown>): Promise<unknown> => {
+const thrownBy = async (
+  promise: Promise<unknown>,
+): Promise<Error | undefined> => {
   try {
     await promise;
   } catch (error: unknown) {
-    return error;
+    return error instanceof Error ? error : new Error(String(error));
   }
   return undefined;
 };
@@ -159,6 +160,7 @@ describe('GitHubClient.listReleaseTags', () => {
     expect(text).toMatch(
       new RegExp(
         String.raw`^Failed to fetch releases from o/r \(${status}\)\. `,
+        'u',
       ),
     );
     expect(text).toMatch(message);
@@ -307,10 +309,11 @@ describe('GitHubClient failure messages', () => {
     );
 
     expect(error).toMatchObject({ code: 'EREDIRECT' });
-    expect(messageOf(error)).toContain(
+    const message = messageOf(error);
+    expect(message).toContain(
       'answered 301 with a redirect to https://other.example/repos/n/r/releases, which is not followed',
     );
-    expect(messageOf(error)).not.toContain('access=1');
+    expect(message).not.toContain('access=1');
   });
 
   it('refuses a malformed proxy setting without printing it', async () => {
@@ -328,6 +331,7 @@ describe('GitHubClient failure messages', () => {
       expect(shown).not.toContain('PW-SECRET');
       expect(shown).toContain('HTTPS_PROXY');
     } finally {
+      // eslint-disable-next-line require-atomic-updates -- restores the environment after the awaited work
       process.env = saved;
     }
   });
@@ -466,7 +470,9 @@ describe('request over a real socket', () => {
 
       expect(pending.size).toBe(0);
     } finally {
+      // eslint-disable-next-line require-atomic-updates -- restores the timers after the awaited work
       globalThis.setTimeout = realSet;
+      // eslint-disable-next-line require-atomic-updates -- restores the timers after the awaited work
       globalThis.clearTimeout = realClear;
     }
   });
@@ -567,8 +573,9 @@ describe('request body and proxy over a real socket', () => {
       ),
     );
 
-    expect(String(error)).toContain('ECONNREFUSED');
-    expect(String(error)).not.toContain('SECRET');
+    const shown = String(error);
+    expect(shown).toContain('ECONNREFUSED');
+    expect(shown).not.toContain('SECRET');
   });
 
   it('goes through the proxy named by the environment', async () => {
@@ -612,7 +619,9 @@ describe('request body and proxy over a real socket', () => {
 
       expect(Date.now() - started).toBeLessThan(4000);
       const connects = proxy.connects();
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 500);
+      });
       expect(proxy.connects()).toBe(connects);
     },
     15_000,

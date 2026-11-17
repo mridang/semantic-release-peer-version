@@ -11,13 +11,7 @@
  * logger.log('released', 1.2); // lines is ['released 1.2']
  * ```
  */
-export function recordingLogger(): {
-  logger: {
-    log: (...args: unknown[]) => void;
-    warn: (...args: unknown[]) => void;
-  };
-  lines: string[];
-} {
+export function recordingLogger() {
   const lines: string[] = [];
   const write = (...args: unknown[]): void => {
     lines.push(args.map(String).join(' '));
