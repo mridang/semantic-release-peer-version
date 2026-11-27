@@ -5,4 +5,9 @@ import mridangPlugin from '@mridang/eslint-defaults';
 export default [
   includeIgnoreFile(fileURLToPath(new URL('.gitignore', import.meta.url))),
   ...mridangPlugin.configs.recommended,
+  {
+    rules: {
+      'sonarjs/no-empty-test-file': 'off',
+    },
+  },
 ];
